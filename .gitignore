@@ -43,4 +43,4 @@ npm-debug.log
 
 # Editor/tooling state.
 /.elixir_ls/
-/.claude/
+/.claude/settings.local.json
