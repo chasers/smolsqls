@@ -95,7 +95,7 @@ defmodule Sqlites.LimitsTest do
 
   describe "query timeouts" do
     @slow_query """
-    WITH RECURSIVE c(x) AS (VALUES(1) UNION ALL SELECT x + 1 FROM c WHERE x < 100000000)
+    WITH RECURSIVE c(x) AS (VALUES(1) UNION ALL SELECT x + 1 FROM c WHERE x < 4000000000)
     SELECT count(*) FROM c
     """
 
