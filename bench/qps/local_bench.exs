@@ -25,6 +25,11 @@ end
 {:ok, tenant} =
   ControlPlane.create_tenant(%{"name" => "Bench", "slug" => "bench-#{System.unique_integer([:positive])}"})
 
+{:ok, tenant} =
+  tenant
+  |> Ecto.Changeset.change(limits: %{"max_databases" => 1_000_000})
+  |> Sqlites.Repo.update()
+
 make_db = fn name ->
   {:ok, db} = Sqlites.create_database(tenant, %{"name" => name})
   db

@@ -7,6 +7,49 @@ defmodule Sqlites.DataPlane.ReconcilerTest do
   alias Sqlites.ControlPlane.Database
   alias Sqlites.DataPlane.Reconciler
 
+  test "skips reclaim entirely when this node was drained or evacuated" do
+    tenant = tenant_fixture()
+    database = placed_database_fixture(tenant)
+
+    {:ok, _} =
+      database
+      |> Database.placement_changeset(%{node: "survivor@elsewhere"})
+      |> Repo.update()
+
+    Repo.insert!(%Sqlites.Drain.Request{
+      node: to_string(Node.self()),
+      kind: "evacuate",
+      requested_at: DateTime.utc_now(),
+      completed_at: DateTime.utc_now(),
+      reassigned: 1
+    })
+
+    assert %{found: 0, claimed: 0} = Reconciler.reconcile()
+    assert ControlPlane.get_database(database.id).node == "survivor@elsewhere"
+  end
+
+  test "a cancelled evacuation does not block reclaim" do
+    tenant = tenant_fixture()
+    database = placed_database_fixture(tenant)
+
+    {:ok, _} =
+      database
+      |> Database.placement_changeset(%{node: "departed@old-pod"})
+      |> Repo.update()
+
+    Repo.insert!(%Sqlites.Drain.Request{
+      node: to_string(Node.self()),
+      kind: "evacuate",
+      requested_at: DateTime.utc_now(),
+      completed_at: DateTime.utc_now(),
+      error: "cancelled: node reconnected"
+    })
+
+    result = Reconciler.reconcile()
+    assert result.claimed >= 1
+    assert ControlPlane.get_database(database.id).node == to_string(Node.self())
+  end
+
   test "claims a database whose file is local but record points elsewhere" do
     tenant = tenant_fixture()
     database = placed_database_fixture(tenant)

@@ -50,6 +50,7 @@ defmodule SqlitesWeb.Telemetry do
       counter("sqlites.node_operation.count", tags: [:kind, :result]),
       counter("sqlites.rate_limiter.rejected.count"),
       counter("sqlites.fence.stopped.count"),
+      sum("sqlites.reconciler.claimed.count"),
       distribution("phoenix.router_dispatch.stop.duration",
         tags: [:route],
         unit: {:native, :millisecond},

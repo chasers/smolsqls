@@ -48,3 +48,5 @@ config :phoenix,
   sort_verified_routes_query_params: true
 
 config :sqlites, Sqlites.Secrets, key: "test-only-token-encryption-key"
+
+config :sqlites, reconciler_membership_timeout: 0
