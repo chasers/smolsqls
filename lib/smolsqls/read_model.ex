@@ -8,8 +8,9 @@ defmodule Smolsqls.ReadModel do
   from control-plane mutations.
 
   When the read model is ready, a miss here definitively means the row
-  does not exist. Timestamps are not replicated (hot paths don't read
-  them); rows loaded via snapshot/WAL carry `nil` timestamps.
+  does not exist. Rows carry the same fields as their Repo structs,
+  timestamps included, so a read-model struct is interchangeable with
+  one loaded from Postgres.
   """
 
   use GenServer

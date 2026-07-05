@@ -6,10 +6,10 @@ defmodule Smolsqls.ReadModel.Row do
 
   alias Smolsqls.ControlPlane.{Database, DatabaseToken, Tenant, TenantApiKey}
 
-  @database_columns ~w(id tenant_id name status node file_path litestream_enabled snapshot_generation limits)
-  @tenant_columns ~w(id name slug limits)
-  @database_token_columns ~w(id database_id token_hash enabled expires_at)
-  @tenant_api_key_columns ~w(id tenant_id token_hash enabled expires_at)
+  @database_columns ~w(id tenant_id name status node file_path litestream_enabled snapshot_generation limits inserted_at updated_at)
+  @tenant_columns ~w(id name slug limits inserted_at updated_at)
+  @database_token_columns ~w(id database_id token_hash enabled expires_at inserted_at updated_at)
+  @tenant_api_key_columns ~w(id tenant_id token_hash enabled expires_at inserted_at updated_at)
 
   def database_columns, do: @database_columns
   def tenant_columns, do: @tenant_columns
@@ -27,7 +27,9 @@ defmodule Smolsqls.ReadModel.Row do
       file_path: Map.get(values, "file_path"),
       litestream_enabled: boolean(Map.get(values, "litestream_enabled")),
       snapshot_generation: integer(Map.get(values, "snapshot_generation")),
-      limits: map(Map.get(values, "limits"))
+      limits: map(Map.get(values, "limits")),
+      inserted_at: datetime(Map.get(values, "inserted_at")),
+      updated_at: datetime(Map.get(values, "updated_at"))
     }
   end
 
@@ -37,7 +39,9 @@ defmodule Smolsqls.ReadModel.Row do
       id: Map.fetch!(values, "id"),
       name: Map.fetch!(values, "name"),
       slug: Map.fetch!(values, "slug"),
-      limits: map(Map.get(values, "limits"))
+      limits: map(Map.get(values, "limits")),
+      inserted_at: datetime(Map.get(values, "inserted_at")),
+      updated_at: datetime(Map.get(values, "updated_at"))
     }
   end
 
@@ -48,7 +52,9 @@ defmodule Smolsqls.ReadModel.Row do
       database_id: Map.fetch!(values, "database_id"),
       token_hash: Map.fetch!(values, "token_hash"),
       enabled: boolean(Map.get(values, "enabled")),
-      expires_at: datetime(Map.get(values, "expires_at"))
+      expires_at: datetime(Map.get(values, "expires_at")),
+      inserted_at: datetime(Map.get(values, "inserted_at")),
+      updated_at: datetime(Map.get(values, "updated_at"))
     }
   end
 
@@ -59,7 +65,9 @@ defmodule Smolsqls.ReadModel.Row do
       tenant_id: Map.fetch!(values, "tenant_id"),
       token_hash: Map.fetch!(values, "token_hash"),
       enabled: boolean(Map.get(values, "enabled")),
-      expires_at: datetime(Map.get(values, "expires_at"))
+      expires_at: datetime(Map.get(values, "expires_at")),
+      inserted_at: datetime(Map.get(values, "inserted_at")),
+      updated_at: datetime(Map.get(values, "updated_at"))
     }
   end
 
@@ -73,12 +81,19 @@ defmodule Smolsqls.ReadModel.Row do
   defp datetime(nil), do: nil
 
   defp datetime(value) do
-    iso = String.replace(value, " ", "T")
-    iso = if Regex.match?(~r/[+-]\d\d$/, iso), do: iso <> ":00", else: iso
+    iso = value |> String.replace(" ", "T") |> ensure_offset()
 
     case DateTime.from_iso8601(iso) do
       {:ok, parsed, _offset} -> parsed
       _ -> nil
+    end
+  end
+
+  defp ensure_offset(iso) do
+    cond do
+      Regex.match?(~r/[+-]\d\d$/, iso) -> iso <> ":00"
+      Regex.match?(~r/([+-]\d\d:\d\d|Z)$/, iso) -> iso
+      true -> iso <> "Z"
     end
   end
 

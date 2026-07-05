@@ -27,6 +27,10 @@ defmodule Smolsqls.ReadModel.SnapshotTest do
     assert loaded.status == :pending
     assert loaded.node == nil
 
+    stored = Smolsqls.Repo.get!(Smolsqls.ControlPlane.Database, database.id)
+    assert %DateTime{} = loaded.inserted_at
+    assert DateTime.compare(loaded.inserted_at, stored.inserted_at) == :eq
+
     loaded_token =
       ReadModel.get_database_token_by_hash(Smolsqls.Secrets.hash(database.auth_token))
 
