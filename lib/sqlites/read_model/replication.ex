@@ -116,9 +116,33 @@ defmodule Sqlites.ReadModel.Replication do
     state
   end
 
+  defp apply_event({change, "database_tokens", values}, state)
+       when change in [:insert, :update] do
+    ReadModel.put_database_token(Row.build_database_token(values))
+    state
+  end
+
+  defp apply_event({:delete, "database_tokens", %{"id" => id}}, state) when is_binary(id) do
+    ReadModel.delete_database_token(id)
+    state
+  end
+
+  defp apply_event({change, "tenant_api_keys", values}, state)
+       when change in [:insert, :update] do
+    ReadModel.put_tenant_api_key(Row.build_tenant_api_key(values))
+    state
+  end
+
+  defp apply_event({:delete, "tenant_api_keys", %{"id" => id}}, state) when is_binary(id) do
+    ReadModel.delete_tenant_api_key(id)
+    state
+  end
+
   defp apply_event({:truncate, names}, state) do
     if "databases" in names, do: ReadModel.truncate(:databases)
     if "tenants" in names, do: ReadModel.truncate(:tenants)
+    if "database_tokens" in names, do: ReadModel.truncate(:database_tokens)
+    if "tenant_api_keys" in names, do: ReadModel.truncate(:tenant_api_keys)
     state
   end
 

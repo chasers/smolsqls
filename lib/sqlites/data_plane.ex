@@ -5,9 +5,11 @@ defmodule Sqlites.DataPlane do
   owns the file.
   """
 
+  require Logger
+
   alias Sqlites.ControlPlane
   alias Sqlites.ControlPlane.Database
-  alias Sqlites.DataPlane.{Litestream, Placement, Registry, Router, Supervisor}
+  alias Sqlites.DataPlane.{IdleSnapshots, Litestream, Placement, Registry, Router, Supervisor}
 
   @gen_rpc_timeout :timer.seconds(15)
 
@@ -80,10 +82,12 @@ defmodule Sqlites.DataPlane do
   def activate_database(%Database{}), do: {:error, :database_not_active}
 
   @doc """
-  Starts the server for a database this node owns. When the file is
-  missing from the local volume — the failover case, where placement
-  was reassigned to this node — the litestream replica is restored
-  first. A database is never started from an empty file.
+  Starts the server for a database this node owns. Activation trusts
+  placement plus the snapshot generation, never bare file presence: a
+  local file whose generation sidecar is behind the metadb is a stale
+  cache — discarded and re-fetched. Restore order is litestream
+  replica (premium) → idle snapshot → latest manual backup → error.
+  A database is never started from an empty file.
   """
   @spec activate_database_locally(Database.t()) :: {:ok, pid()} | {:error, term()}
   def activate_database_locally(%Database{} = database) do
@@ -92,16 +96,43 @@ defmodule Sqlites.DataPlane do
     end
   end
 
-  defp ensure_local_file(%Database{file_path: file_path} = database) do
-    cond do
-      File.exists?(file_path) ->
-        :ok
+  defp ensure_local_file(%Database{} = database) do
+    if local_file_current?(database) do
+      :ok
+    else
+      discard_stale_local_file(database)
+      restore_for_activation(database)
+    end
+  end
 
+  defp local_file_current?(%Database{file_path: file_path} = database) do
+    File.exists?(file_path) and
+      IdleSnapshots.local_generation(file_path) >= (database.snapshot_generation || 0)
+  end
+
+  defp discard_stale_local_file(%Database{file_path: file_path} = database) do
+    if File.exists?(file_path) do
+      Logger.info(
+        "discarding stale local file for #{database.id}: local generation " <>
+          "#{IdleSnapshots.local_generation(file_path)} < #{database.snapshot_generation}"
+      )
+
+      delete_local_files(file_path)
+    end
+
+    :ok
+  end
+
+  defp restore_for_activation(%Database{file_path: file_path} = database) do
+    cond do
       database.litestream_enabled and match?(:ok, Litestream.restore(database, file_path)) ->
+        IdleSnapshots.write_local_generation(file_path, database.snapshot_generation || 0)
+
+      match?(:ok, IdleSnapshots.restore(database, file_path)) ->
         :ok
 
       match?(:ok, restore_latest_backup(database)) ->
-        :ok
+        IdleSnapshots.write_local_generation(file_path, database.snapshot_generation || 0)
 
       true ->
         {:error, :database_file_missing}
@@ -113,6 +144,22 @@ defmodule Sqlites.DataPlane do
       [latest | _] -> Sqlites.ObjectStore.fetch_to_file(latest.object_key, file_path)
       [] -> {:error, :no_backups}
     end
+  end
+
+  @doc """
+  Stops a database's server through the idle-stop path — the snapshot
+  ships first when the session was dirty (or the database has never
+  shipped). Used by drains to hand off hot databases before their
+  placement rows move.
+  """
+  @spec idle_stop_database(Database.t()) :: :ok | {:error, term()}
+  def idle_stop_database(%Database{} = database) do
+    on_owner_node(database, :idle_stop_database_locally, [database])
+  end
+
+  @spec idle_stop_database_locally(Database.t()) :: :ok
+  def idle_stop_database_locally(%Database{} = database) do
+    Sqlites.DataPlane.Database.Server.idle_stop(database.id)
   end
 
   @doc """
@@ -232,21 +279,44 @@ defmodule Sqlites.DataPlane do
   @spec remove_database_locally(Database.t()) :: {:ok, Database.t()} | {:error, term()}
   def remove_database_locally(%Database{} = database) do
     :ok = Supervisor.stop_database(database.id)
-    if database.file_path, do: Litestream.stop(database.file_path)
 
     if database.file_path do
-      File.rm(database.file_path)
-      File.rm(database.file_path <> "-wal")
-      File.rm(database.file_path <> "-shm")
+      Litestream.stop(database.file_path)
+      delete_local_files(database.file_path)
     end
 
+    IdleSnapshots.delete(database)
     ControlPlane.delete_database(database)
   end
 
-  @spec query(String.t(), String.t(), [term()]) ::
+  @doc """
+  Removes a database's cached files from the local volume: the file,
+  its WAL/SHM companions, and the generation sidecar.
+  """
+  @spec delete_local_files(Path.t()) :: :ok
+  def delete_local_files(file_path) do
+    File.rm(file_path)
+    File.rm(file_path <> "-wal")
+    File.rm(file_path <> "-shm")
+    File.rm(IdleSnapshots.marker_path(file_path))
+    :ok
+  end
+
+  @spec query(String.t(), String.t(), [term()] | map(), timeout()) ::
           {:ok, Sqlites.DataPlane.Database.Server.query_result()} | {:error, term()}
-  def query(database_id, sql, args \\ []) do
-    Router.query(database_id, sql, args)
+  def query(database_id, sql, args \\ [], timeout \\ :timer.seconds(30)) do
+    Router.query(database_id, sql, args, timeout)
+  end
+
+  @spec describe(String.t(), String.t(), timeout()) ::
+          {:ok, Sqlites.DataPlane.Database.Server.describe_result()} | {:error, term()}
+  def describe(database_id, sql, timeout \\ :timer.seconds(30)) do
+    Router.describe(database_id, sql, timeout)
+  end
+
+  @spec sequence(String.t(), String.t(), timeout()) :: :ok | {:error, term()}
+  def sequence(database_id, sql, timeout \\ :timer.seconds(30)) do
+    Router.sequence(database_id, sql, timeout)
   end
 
   @spec owner_node(String.t()) :: {:ok, node()} | {:error, :not_found}

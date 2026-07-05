@@ -36,6 +36,49 @@ defmodule Sqlites.Backups do
     |> Repo.all()
   end
 
+  @doc """
+  Cursor-paginated backup listing, newest first: keyset on
+  `(inserted_at, id)` descending, `after` is the id of the last row of
+  the previous page. Returns `%{entries: [...], next: id | nil}`.
+  """
+  @spec paginate(Database.t(), keyword()) ::
+          {:ok, %{entries: [Backup.t()], next: String.t() | nil}} | {:error, :invalid_cursor}
+  def paginate(%Database{} = database, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 100)
+
+    with {:ok, cursor} <- cursor(database, Keyword.get(opts, :after)) do
+      entries =
+        Backup
+        |> where([b], b.database_id == ^database.id)
+        |> after_cursor(cursor)
+        |> order_by([b], desc: b.inserted_at, desc: b.id)
+        |> limit(^(limit + 1))
+        |> Repo.all()
+
+      {page, rest} = Enum.split(entries, limit)
+      {:ok, %{entries: page, next: if(rest == [], do: nil, else: List.last(page).id)}}
+    end
+  end
+
+  defp cursor(_database, nil), do: {:ok, nil}
+
+  defp cursor(database, after_id) do
+    case get(database, after_id) do
+      %Backup{} = cursor -> {:ok, cursor}
+      nil -> {:error, :invalid_cursor}
+    end
+  end
+
+  defp after_cursor(query, nil), do: query
+
+  defp after_cursor(query, %Backup{inserted_at: inserted_at, id: id}) do
+    where(
+      query,
+      [b],
+      b.inserted_at < ^inserted_at or (b.inserted_at == ^inserted_at and b.id < ^id)
+    )
+  end
+
   @spec get(Database.t(), String.t()) :: Backup.t() | nil
   def get(%Database{id: database_id}, backup_id) do
     case Ecto.UUID.cast(backup_id) do

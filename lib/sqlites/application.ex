@@ -15,10 +15,13 @@ defmodule Sqlites.Application do
         Sqlites.Repo,
         {Cluster.Supervisor, [cluster_topologies(), [name: Sqlites.ClusterSupervisor]]},
         {Phoenix.PubSub, name: Sqlites.PubSub},
+        Sqlites.RateLimiter,
         Sqlites.DataPlane.Supervisor,
         Sqlites.DataPlane.Reconciler
       ] ++
         read_model_children() ++
+        enabled_child(Sqlites.DataPlane.CacheEvictor) ++
+        enabled_child(Sqlites.Drain.Worker) ++
         [SqlitesWeb.Endpoint]
 
     # See https://elixir.hexdocs.pm/Supervisor.html
@@ -33,6 +36,14 @@ defmodule Sqlites.Application do
   def config_change(changed, _new, removed) do
     SqlitesWeb.Endpoint.config_change(changed, removed)
     :ok
+  end
+
+  defp enabled_child(module) do
+    if Application.get_env(:sqlites, module, [])[:enabled] do
+      [{module, []}]
+    else
+      []
+    end
   end
 
   defp read_model_children do

@@ -13,6 +13,7 @@ defmodule SqlitesWeb.DatabaseLive.Index do
          |> assign(:page_title, "Databases")
          |> assign(:new_database_form, to_form(%{"name" => ""}))
          |> assign(:revealed_database_id, nil)
+         |> assign(:reveal_token, nil)
          |> assign(:backups, [])
          |> load_databases()}
 
@@ -79,14 +80,29 @@ defmodule SqlitesWeb.DatabaseLive.Index do
 
   def handle_event("toggle_connection", %{"id" => id}, socket) do
     if socket.assigns.revealed_database_id == id do
-      {:noreply, assign(socket, revealed_database_id: nil, backups: [])}
+      {:noreply, assign(socket, revealed_database_id: nil, reveal_token: nil, backups: [])}
     else
       database = ControlPlane.get_database(socket.assigns.tenant, id)
 
       {:noreply,
        socket
        |> assign(:revealed_database_id, id)
+       |> assign(:reveal_token, usable_token(database))
        |> load_backups(database)}
+    end
+  end
+
+  defp usable_token(nil), do: nil
+
+  defp usable_token(database) do
+    with %ControlPlane.DatabaseToken{} = token <-
+           database
+           |> ControlPlane.list_database_tokens()
+           |> Enum.find(&ControlPlane.token_usable?/1),
+         {:ok, revealed} <- ControlPlane.reveal(token) do
+      revealed
+    else
+      _ -> nil
     end
   end
 
@@ -111,10 +127,10 @@ defmodule SqlitesWeb.DatabaseLive.Index do
     end
   end
 
-  defp connection_string(database) do
+  defp connection_string(database, token) do
     host = SqlitesWeb.Endpoint.host()
     port = SqlitesWeb.Endpoint.url() |> URI.parse() |> Map.get(:port)
-    "libsql://#{host}:#{port}/#{database.id}?authToken=#{database.auth_token}"
+    "libsql://#{host}:#{port}/#{database.id}?authToken=#{token.token}"
   end
 
   defp query_url(database) do
@@ -194,12 +210,15 @@ defmodule SqlitesWeb.DatabaseLive.Index do
                 </div>
               </div>
               <div :if={@revealed_database_id == database.id} class="space-y-2 text-sm">
-                <div>
+                <div :if={@reveal_token}>
                   <div class="text-xs text-base-content/60 mb-1">libSQL connection string</div>
                   <code class="block bg-base-300 rounded p-2 font-mono break-all">
-                    {connection_string(database)}
+                    {connection_string(database, @reveal_token)}
                   </code>
                 </div>
+                <p :if={is_nil(@reveal_token)} class="text-xs text-warning">
+                  No usable tokens — create one via POST /v1/databases/{database.id}/tokens.
+                </p>
                 <div>
                   <div class="text-xs text-base-content/60 mb-1">
                     HTTP — POST with Authorization: Bearer &lt;auth_token&gt;

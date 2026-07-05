@@ -57,28 +57,59 @@ defmodule Sqlites.ReadModel.ReplicationTest do
     Postgrex.query!(
       conn,
       """
-      INSERT INTO tenants (id, name, slug, api_key, inserted_at, updated_at)
-      VALUES ($1::uuid, 'Repl Org', $2, $3, now(), now())
+      INSERT INTO tenants (id, name, slug, inserted_at, updated_at)
+      VALUES ($1::uuid, 'Repl Org', $2, now(), now())
       """,
-      [Ecto.UUID.dump!(tenant_id), "repl-#{System.unique_integer([:positive])}", api_key]
+      [Ecto.UUID.dump!(tenant_id), "repl-#{System.unique_integer([:positive])}"]
     )
 
-    wait_until(fn -> ReadModel.get_tenant_by_api_key(api_key) != nil end)
+    Postgrex.query!(
+      conn,
+      """
+      INSERT INTO tenant_api_keys
+        (id, tenant_id, token_hash, token_ciphertext, enabled, inserted_at, updated_at)
+      VALUES (gen_random_uuid(), $1::uuid, $2, $3, true, now(), now())
+      """,
+      [
+        Ecto.UUID.dump!(tenant_id),
+        Sqlites.Secrets.hash(api_key),
+        Sqlites.Secrets.encrypt(api_key)
+      ]
+    )
+
+    wait_until(fn ->
+      ReadModel.get_tenant_api_key_by_hash(Sqlites.Secrets.hash(api_key)) != nil
+    end)
+
     assert ReadModel.get_tenant(tenant_id).name == "Repl Org"
 
     Postgrex.query!(
       conn,
       """
-      INSERT INTO databases (id, tenant_id, name, status, auth_token, inserted_at, updated_at)
-      VALUES ($1::uuid, $2::uuid, 'repl-db', 'active', $3, now(), now())
+      INSERT INTO databases (id, tenant_id, name, status, inserted_at, updated_at)
+      VALUES ($1::uuid, $2::uuid, 'repl-db', 'active', now(), now())
       """,
-      [Ecto.UUID.dump!(database_id), Ecto.UUID.dump!(tenant_id), token]
+      [Ecto.UUID.dump!(database_id), Ecto.UUID.dump!(tenant_id)]
+    )
+
+    token_hash = Sqlites.Secrets.hash(token)
+
+    Postgrex.query!(
+      conn,
+      """
+      INSERT INTO database_tokens
+        (id, database_id, token_hash, token_ciphertext, enabled, inserted_at, updated_at)
+      VALUES (gen_random_uuid(), $1::uuid, $2, $3, true, now(), now())
+      """,
+      [Ecto.UUID.dump!(database_id), token_hash, Sqlites.Secrets.encrypt(token)]
     )
 
     wait_until(fn -> ReadModel.get_database(database_id) != nil end)
-    database = ReadModel.get_database_by_auth_token(token)
-    assert database.id == database_id
-    assert database.status == :active
+    wait_until(fn -> ReadModel.get_database_token_by_hash(token_hash) != nil end)
+
+    found = ReadModel.get_database_token_by_hash(token_hash)
+    assert found.database_id == database_id
+    assert found.enabled
 
     Postgrex.query!(
       conn,
@@ -90,12 +121,22 @@ defmodule Sqlites.ReadModel.ReplicationTest do
       match?(%{node: "claimed@somewhere"}, ReadModel.get_database(database_id))
     end)
 
+    Postgrex.query!(
+      conn,
+      "UPDATE database_tokens SET enabled = false, updated_at = now() WHERE token_hash = $1",
+      [token_hash]
+    )
+
+    wait_until(fn ->
+      match?(%{enabled: false}, ReadModel.get_database_token_by_hash(token_hash))
+    end)
+
     Postgrex.query!(conn, "DELETE FROM databases WHERE id = $1::uuid", [
       Ecto.UUID.dump!(database_id)
     ])
 
     wait_until(fn -> ReadModel.get_database(database_id) == nil end)
-    assert ReadModel.get_database_by_auth_token(token) == nil
+    wait_until(fn -> ReadModel.get_database_token_by_hash(token_hash) == nil end)
   end
 
   defp start_raw_conn! do

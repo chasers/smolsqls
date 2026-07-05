@@ -16,6 +16,15 @@ config :sqlites,
 
 config :sqlites, Sqlites.ReadModel, enabled: true
 
+config :sqlites, Sqlites.Limits,
+  max_databases: 100,
+  max_size_bytes: 1_073_741_824,
+  rate_limit_rps: nil,
+  query_timeout_ms: 30_000,
+  statement_timeout_ms: 30_000,
+  idle_ttl_ms: nil,
+  max_hot_ms: nil
+
 config :sqlites, Sqlites.ObjectStore, adapter: Sqlites.ObjectStore.S3
 
 # Configure the endpoint
@@ -63,6 +72,8 @@ config :logger, :default_formatter,
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
+
+config :phoenix, :filter_parameters, ["password", "token", "secret", "api_key", "auth_token"]
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

@@ -1,10 +1,11 @@
 defmodule Sqlites.ReadModel do
   @moduledoc """
   Full in-memory replica of the request-path metadb tables (`tenants`,
-  `databases`), so auth and placement reads never touch Postgres.
-  Postgres remains the sole source of truth for writes; these tables
-  are written only by the COPY snapshot, the WAL replication feed, and
-  local write-through from control-plane mutations.
+  `databases`, `database_tokens`, `tenant_api_keys`), so auth and
+  placement reads never touch Postgres. Postgres remains the sole
+  source of truth for writes; these tables are written only by the
+  COPY snapshot, the WAL replication feed, and local write-through
+  from control-plane mutations.
 
   When the read model is ready, a miss here definitively means the row
   does not exist. Timestamps are not replicated (hot paths don't read
@@ -13,12 +14,23 @@ defmodule Sqlites.ReadModel do
 
   use GenServer
 
-  alias Sqlites.ControlPlane.{Database, Tenant}
+  alias Sqlites.ControlPlane.{Database, DatabaseToken, Tenant, TenantApiKey}
 
   @databases __MODULE__.Databases
-  @databases_by_token __MODULE__.DatabasesByToken
+  @database_tokens __MODULE__.DatabaseTokens
+  @database_tokens_by_hash __MODULE__.DatabaseTokensByHash
   @tenants __MODULE__.Tenants
-  @tenants_by_api_key __MODULE__.TenantsByApiKey
+  @tenant_api_keys __MODULE__.TenantApiKeys
+  @tenant_api_keys_by_hash __MODULE__.TenantApiKeysByHash
+
+  @tables [
+    @databases,
+    @database_tokens,
+    @database_tokens_by_hash,
+    @tenants,
+    @tenant_api_keys,
+    @tenant_api_keys_by_hash
+  ]
 
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__, timeout: :timer.minutes(5))
@@ -26,7 +38,7 @@ defmodule Sqlites.ReadModel do
 
   @impl true
   def init(opts) do
-    for table <- [@databases, @databases_by_token, @tenants, @tenants_by_api_key] do
+    for table <- @tables do
       :ets.new(table, [:set, :named_table, :public, read_concurrency: true])
     end
 
@@ -60,14 +72,6 @@ defmodule Sqlites.ReadModel do
     end
   end
 
-  @spec get_database_by_auth_token(String.t()) :: Database.t() | nil
-  def get_database_by_auth_token(auth_token) do
-    case :ets.lookup(@databases_by_token, auth_token) do
-      [{^auth_token, id}] -> get_database(id)
-      [] -> nil
-    end
-  end
-
   @spec get_tenant(String.t()) :: Tenant.t() | nil
   def get_tenant(id) do
     case :ets.lookup(@tenants, id) do
@@ -76,76 +80,113 @@ defmodule Sqlites.ReadModel do
     end
   end
 
-  @spec get_tenant_by_api_key(String.t()) :: Tenant.t() | nil
-  def get_tenant_by_api_key(api_key) do
-    case :ets.lookup(@tenants_by_api_key, api_key) do
-      [{^api_key, id}] -> get_tenant(id)
-      [] -> nil
+  @spec get_database_token_by_hash(String.t()) :: DatabaseToken.t() | nil
+  def get_database_token_by_hash(token_hash) do
+    lookup_by_hash(@database_tokens_by_hash, @database_tokens, token_hash)
+  end
+
+  @spec get_tenant_api_key_by_hash(String.t()) :: TenantApiKey.t() | nil
+  def get_tenant_api_key_by_hash(token_hash) do
+    lookup_by_hash(@tenant_api_keys_by_hash, @tenant_api_keys, token_hash)
+  end
+
+  defp lookup_by_hash(hash_table, table, token_hash) do
+    with [{^token_hash, id}] <- :ets.lookup(hash_table, token_hash),
+         [{^id, row}] <- :ets.lookup(table, id) do
+      row
+    else
+      _ -> nil
     end
   end
 
   @spec put_database(Database.t()) :: :ok
   def put_database(%Database{} = database) do
-    case get_database(database.id) do
-      %Database{auth_token: old_token} when old_token != database.auth_token ->
-        :ets.delete(@databases_by_token, old_token)
-
-      _ ->
-        :ok
-    end
-
     :ets.insert(@databases, {database.id, database})
-    :ets.insert(@databases_by_token, {database.auth_token, database.id})
     :ok
   end
 
   @spec delete_database(String.t()) :: :ok
   def delete_database(id) do
-    case get_database(id) do
-      %Database{auth_token: token} -> :ets.delete(@databases_by_token, token)
-      nil -> :ok
-    end
-
     :ets.delete(@databases, id)
     :ok
   end
 
   @spec put_tenant(Tenant.t()) :: :ok
   def put_tenant(%Tenant{} = tenant) do
-    case get_tenant(tenant.id) do
-      %Tenant{api_key: old_key} when old_key != tenant.api_key ->
-        :ets.delete(@tenants_by_api_key, old_key)
-
-      _ ->
-        :ok
-    end
-
     :ets.insert(@tenants, {tenant.id, tenant})
-    :ets.insert(@tenants_by_api_key, {tenant.api_key, tenant.id})
     :ok
   end
 
   @spec delete_tenant(String.t()) :: :ok
   def delete_tenant(id) do
-    case get_tenant(id) do
-      %Tenant{api_key: api_key} -> :ets.delete(@tenants_by_api_key, api_key)
-      nil -> :ok
-    end
-
     :ets.delete(@tenants, id)
     :ok
   end
 
-  @spec truncate(:databases | :tenants) :: :ok
+  @spec put_database_token(DatabaseToken.t()) :: :ok
+  def put_database_token(%DatabaseToken{} = token) do
+    put_hashed_row(@database_tokens, @database_tokens_by_hash, token.id, token.token_hash, token)
+  end
+
+  @spec delete_database_token(String.t()) :: :ok
+  def delete_database_token(id) do
+    delete_hashed_row(@database_tokens, @database_tokens_by_hash, id)
+  end
+
+  @spec put_tenant_api_key(TenantApiKey.t()) :: :ok
+  def put_tenant_api_key(%TenantApiKey{} = key) do
+    put_hashed_row(@tenant_api_keys, @tenant_api_keys_by_hash, key.id, key.token_hash, key)
+  end
+
+  @spec delete_tenant_api_key(String.t()) :: :ok
+  def delete_tenant_api_key(id) do
+    delete_hashed_row(@tenant_api_keys, @tenant_api_keys_by_hash, id)
+  end
+
+  defp put_hashed_row(table, hash_table, id, token_hash, row) do
+    case :ets.lookup(table, id) do
+      [{^id, %{token_hash: old_hash}}] when old_hash != token_hash ->
+        :ets.delete(hash_table, old_hash)
+
+      _ ->
+        :ok
+    end
+
+    :ets.insert(table, {id, row})
+    :ets.insert(hash_table, {token_hash, id})
+    :ok
+  end
+
+  defp delete_hashed_row(table, hash_table, id) do
+    case :ets.lookup(table, id) do
+      [{^id, %{token_hash: token_hash}}] -> :ets.delete(hash_table, token_hash)
+      [] -> :ok
+    end
+
+    :ets.delete(table, id)
+    :ok
+  end
+
+  @spec truncate(:databases | :database_tokens | :tenants | :tenant_api_keys) :: :ok
   def truncate(:databases) do
     :ets.delete_all_objects(@databases)
-    :ets.delete_all_objects(@databases_by_token)
     :ok
   end
 
   def truncate(:tenants) do
     :ets.delete_all_objects(@tenants)
-    :ets.delete_all_objects(@tenants_by_api_key)
+    :ok
+  end
+
+  def truncate(:database_tokens) do
+    :ets.delete_all_objects(@database_tokens)
+    :ets.delete_all_objects(@database_tokens_by_hash)
+    :ok
+  end
+
+  def truncate(:tenant_api_keys) do
+    :ets.delete_all_objects(@tenant_api_keys)
+    :ets.delete_all_objects(@tenant_api_keys_by_hash)
     :ok
   end
 end

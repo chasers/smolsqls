@@ -9,9 +9,11 @@ defmodule Sqlites.ControlPlane.Tenant do
   schema "tenants" do
     field :name, :string
     field :slug, :string
-    field :api_key, :string, redact: true
+    field :api_key, :string, virtual: true, redact: true
+    field :limits, :map, default: %{}
 
     has_many :databases, Sqlites.ControlPlane.Database
+    has_many :api_keys, Sqlites.ControlPlane.TenantApiKey
 
     timestamps(type: :utc_datetime_usec)
   end
@@ -21,7 +23,6 @@ defmodule Sqlites.ControlPlane.Tenant do
     |> cast(attrs, [:name, :slug])
     |> validate_required([:name, :slug])
     |> validate_format(:slug, ~r/^[a-z0-9][a-z0-9-]*$/)
-    |> put_change(:api_key, generate_api_key())
     |> unique_constraint(:slug)
   end
 
@@ -29,9 +30,5 @@ defmodule Sqlites.ControlPlane.Tenant do
     tenant
     |> cast(attrs, [:name])
     |> validate_required([:name])
-  end
-
-  defp generate_api_key do
-    "sk_" <> Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
   end
 end

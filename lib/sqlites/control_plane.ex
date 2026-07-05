@@ -6,42 +6,170 @@ defmodule Sqlites.ControlPlane do
   Kubernetes operator.
 
   Request-path reads (`authenticate_tenant/1`, `authenticate_database/2`,
-  `get_database_by_auth_token/1`, `lookup_database/1`) are served from
-  `Sqlites.ReadModel` when it is ready, so Postgres never sits on the
-  data path. Writes go to Postgres (the source of truth) and are also
-  applied to the local read model immediately; other nodes converge via
-  the WAL feed.
+  `authenticate_database_by_token/1`, `lookup_database/1`) are served
+  from `Sqlites.ReadModel` when it is ready, so Postgres never sits on
+  the data path. Writes go to Postgres (the source of truth) and are
+  also applied to the local read model immediately; other nodes
+  converge via the WAL feed.
+
+  Credentials are managed rows, not columns: `database_tokens` and
+  `tenant_api_keys` hold any number of permanent secrets per owner,
+  each independently disableable, expirable, and deletable. Creating a
+  tenant or database creates a `"default"` secret alongside it,
+  surfaced once on the returned struct's virtual `api_key`/`auth_token`
+  field.
   """
 
   import Ecto.Query
 
-  alias Sqlites.ControlPlane.{Database, Tenant}
+  alias Sqlites.ControlPlane.{Database, DatabaseToken, Tenant, TenantApiKey}
   alias Sqlites.ReadModel
   alias Sqlites.Repo
 
   def create_tenant(attrs) do
-    %Tenant{}
-    |> Tenant.changeset(attrs)
-    |> Repo.insert()
-    |> write_through(&ReadModel.put_tenant/1)
+    Repo.transaction(fn ->
+      with {:ok, tenant} <- Repo.insert(Tenant.changeset(%Tenant{}, attrs)),
+           {:ok, api_key} <-
+             Repo.insert(
+               TenantApiKey.create_changeset(
+                 %TenantApiKey{tenant_id: tenant.id},
+                 %{"name" => "default"}
+               )
+             ) do
+        {tenant, api_key}
+      else
+        {:error, changeset} -> Repo.rollback(changeset)
+      end
+    end)
+    |> case do
+      {:ok, {tenant, api_key}} ->
+        write_through({:ok, tenant}, &ReadModel.put_tenant/1)
+        write_through({:ok, api_key}, &ReadModel.put_tenant_api_key/1)
+        {:ok, %{tenant | api_key: api_key.token}}
+
+      {:error, changeset} ->
+        {:error, changeset}
+    end
   end
 
   def get_tenant(id), do: Repo.get(Tenant, id)
 
+  @doc """
+  Hot-path tenant lookup, served from the read model when ready.
+  """
+  @spec lookup_tenant(String.t()) :: Tenant.t() | nil
+  def lookup_tenant(id) when is_binary(id) do
+    if ReadModel.ready?() do
+      ReadModel.get_tenant(id)
+    else
+      get_tenant(id)
+    end
+  end
+
   def get_tenant_by_slug(slug), do: Repo.get_by(Tenant, slug: slug)
 
   def authenticate_tenant(api_key) when is_binary(api_key) do
+    hash = Sqlites.Secrets.hash(api_key)
+
     lookup =
       if ReadModel.ready?() do
-        ReadModel.get_tenant_by_api_key(api_key)
+        ReadModel.get_tenant_api_key_by_hash(hash)
       else
-        Repo.get_by(Tenant, api_key: api_key)
+        Repo.get_by(TenantApiKey, token_hash: hash)
       end
 
-    case lookup do
-      %Tenant{} = tenant -> {:ok, tenant}
-      nil -> {:error, :unauthorized}
+    with %TenantApiKey{} = key <- lookup,
+         true <- token_usable?(key),
+         %Tenant{} = tenant <- lookup_tenant(key.tenant_id) do
+      {:ok, tenant}
+    else
+      _ -> {:error, :unauthorized}
     end
+  end
+
+  @doc """
+  Decrypts a credential's secret for an explicit reveal request,
+  returned on the virtual `token` field. Fails only when the
+  encryption key changed since the secret was created.
+  """
+  @spec reveal(DatabaseToken.t() | TenantApiKey.t()) ::
+          {:ok, DatabaseToken.t() | TenantApiKey.t()} | :error
+  def reveal(%{token_ciphertext: ciphertext} = credential) do
+    with {:ok, secret} <- Sqlites.Secrets.decrypt(ciphertext) do
+      {:ok, %{credential | token: secret}}
+    end
+  end
+
+  @doc """
+  Whether a `DatabaseToken` or `TenantApiKey` currently authenticates:
+  enabled and not expired.
+  """
+  @spec token_usable?(DatabaseToken.t() | TenantApiKey.t()) :: boolean()
+  def token_usable?(%{enabled: enabled, expires_at: expires_at}) do
+    enabled and (is_nil(expires_at) or DateTime.after?(expires_at, DateTime.utc_now()))
+  end
+
+  @spec list_tenant_api_keys(Tenant.t()) :: [TenantApiKey.t()]
+  def list_tenant_api_keys(%Tenant{id: tenant_id}) do
+    TenantApiKey
+    |> where([k], k.tenant_id == ^tenant_id)
+    |> order_by([k], asc: k.inserted_at)
+    |> Repo.all()
+  end
+
+  @spec get_tenant_api_key(Tenant.t(), String.t()) :: TenantApiKey.t() | nil
+  def get_tenant_api_key(%Tenant{id: tenant_id}, id) do
+    case Ecto.UUID.cast(id) do
+      {:ok, uuid} ->
+        Repo.one(where(TenantApiKey, [k], k.tenant_id == ^tenant_id and k.id == ^uuid))
+
+      :error ->
+        nil
+    end
+  end
+
+  @spec create_tenant_api_key(Tenant.t(), map()) ::
+          {:ok, TenantApiKey.t()} | {:error, Ecto.Changeset.t()}
+  def create_tenant_api_key(%Tenant{} = tenant, attrs) do
+    %TenantApiKey{tenant_id: tenant.id}
+    |> TenantApiKey.create_changeset(attrs)
+    |> Repo.insert()
+    |> write_through(&ReadModel.put_tenant_api_key/1)
+  end
+
+  @spec update_tenant_api_key(TenantApiKey.t(), map()) ::
+          {:ok, TenantApiKey.t()} | {:error, :last_api_key | Ecto.Changeset.t()}
+  def update_tenant_api_key(%TenantApiKey{} = key, attrs) do
+    disabling? = Map.get(attrs, "enabled") in [false, "false"]
+
+    if disabling? and last_usable_api_key?(key) do
+      {:error, :last_api_key}
+    else
+      key
+      |> TenantApiKey.update_changeset(attrs)
+      |> Repo.update()
+      |> write_through(&ReadModel.put_tenant_api_key/1)
+    end
+  end
+
+  @spec delete_tenant_api_key(TenantApiKey.t()) ::
+          {:ok, TenantApiKey.t()} | {:error, :last_api_key | Ecto.Changeset.t()}
+  def delete_tenant_api_key(%TenantApiKey{} = key) do
+    if last_usable_api_key?(key) do
+      {:error, :last_api_key}
+    else
+      key
+      |> Repo.delete()
+      |> write_through(&ReadModel.delete_tenant_api_key(&1.id))
+    end
+  end
+
+  defp last_usable_api_key?(%TenantApiKey{} = key) do
+    token_usable?(key) and
+      TenantApiKey
+      |> where([k], k.tenant_id == ^key.tenant_id and k.id != ^key.id and k.enabled == true)
+      |> where([k], is_nil(k.expires_at) or k.expires_at > ^DateTime.utc_now())
+      |> Repo.aggregate(:count) == 0
   end
 
   def update_tenant(%Tenant{} = tenant, attrs) do
@@ -62,6 +190,52 @@ defmodule Sqlites.ControlPlane do
     |> where([d], d.tenant_id == ^tenant_id)
     |> order_by([d], asc: d.inserted_at)
     |> Repo.all()
+  end
+
+  @doc """
+  Cursor-paginated database listing: keyset on `(inserted_at, id)`,
+  `after` is the id of the last row of the previous page. Returns
+  `%{entries: [...], next: id | nil}`.
+  """
+  @spec paginate_databases(Tenant.t(), keyword()) ::
+          {:ok, %{entries: [Database.t()], next: String.t() | nil}} | {:error, :invalid_cursor}
+  def paginate_databases(%Tenant{id: tenant_id}, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 100)
+
+    with {:ok, cursor} <- database_cursor(tenant_id, Keyword.get(opts, :after)) do
+      entries =
+        Database
+        |> where([d], d.tenant_id == ^tenant_id)
+        |> after_database_cursor(cursor)
+        |> order_by([d], asc: d.inserted_at, asc: d.id)
+        |> limit(^(limit + 1))
+        |> Repo.all()
+
+      {page, rest} = Enum.split(entries, limit)
+      {:ok, %{entries: page, next: if(rest == [], do: nil, else: List.last(page).id)}}
+    end
+  end
+
+  defp database_cursor(_tenant_id, nil), do: {:ok, nil}
+
+  defp database_cursor(tenant_id, after_id) do
+    with {:ok, uuid} <- Ecto.UUID.cast(after_id),
+         %Database{} = cursor <-
+           Repo.one(where(Database, [d], d.tenant_id == ^tenant_id and d.id == ^uuid)) do
+      {:ok, cursor}
+    else
+      _ -> {:error, :invalid_cursor}
+    end
+  end
+
+  defp after_database_cursor(query, nil), do: query
+
+  defp after_database_cursor(query, %Database{inserted_at: inserted_at, id: id}) do
+    where(
+      query,
+      [d],
+      d.inserted_at > ^inserted_at or (d.inserted_at == ^inserted_at and d.id > ^id)
+    )
   end
 
   def get_database(id) do
@@ -95,29 +269,131 @@ defmodule Sqlites.ControlPlane do
     end
   end
 
-  def get_database_by_auth_token(auth_token) when is_binary(auth_token) do
-    if ReadModel.ready?() do
-      ReadModel.get_database_by_auth_token(auth_token)
-    else
-      Repo.get_by(Database, auth_token: auth_token)
-    end
-  end
-
   def authenticate_database(id, auth_token)
       when is_binary(id) and is_binary(auth_token) do
-    with %Database{auth_token: stored} = database when is_binary(stored) <- lookup_database(id),
-         true <- Plug.Crypto.secure_compare(stored, auth_token) do
+    with %DatabaseToken{} = token <- database_token_by_secret(auth_token),
+         true <- token.database_id == id and token_usable?(token),
+         %Database{} = database <- lookup_database(id) do
       {:ok, database}
     else
       _ -> {:error, :unauthorized}
     end
   end
 
-  def create_database(%Tenant{} = tenant, attrs) do
-    %Database{}
-    |> Database.create_changeset(Map.put(attrs, "tenant_id", tenant.id))
+  @doc """
+  Token-only authentication (the Hrana path): resolves the database
+  through any of its usable tokens.
+  """
+  @spec authenticate_database_by_token(String.t()) ::
+          {:ok, Database.t()} | {:error, :unauthorized}
+  def authenticate_database_by_token(auth_token) when is_binary(auth_token) do
+    with %DatabaseToken{} = token <- database_token_by_secret(auth_token),
+         true <- token_usable?(token),
+         %Database{} = database <- lookup_database(token.database_id) do
+      {:ok, database}
+    else
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  defp database_token_by_secret(secret) do
+    hash = Sqlites.Secrets.hash(secret)
+
+    if ReadModel.ready?() do
+      ReadModel.get_database_token_by_hash(hash)
+    else
+      Repo.get_by(DatabaseToken, token_hash: hash)
+    end
+  end
+
+  @spec list_database_tokens(Database.t()) :: [DatabaseToken.t()]
+  def list_database_tokens(%Database{id: database_id}) do
+    DatabaseToken
+    |> where([t], t.database_id == ^database_id)
+    |> order_by([t], asc: t.inserted_at)
+    |> Repo.all()
+  end
+
+  @spec get_database_token(Database.t(), String.t()) :: DatabaseToken.t() | nil
+  def get_database_token(%Database{id: database_id}, id) do
+    case Ecto.UUID.cast(id) do
+      {:ok, uuid} ->
+        Repo.one(where(DatabaseToken, [t], t.database_id == ^database_id and t.id == ^uuid))
+
+      :error ->
+        nil
+    end
+  end
+
+  @spec create_database_token(Database.t(), map()) ::
+          {:ok, DatabaseToken.t()} | {:error, Ecto.Changeset.t()}
+  def create_database_token(%Database{} = database, attrs) do
+    %DatabaseToken{database_id: database.id}
+    |> DatabaseToken.create_changeset(attrs)
     |> Repo.insert()
-    |> write_through(&ReadModel.put_database/1)
+    |> write_through(&ReadModel.put_database_token/1)
+  end
+
+  @spec update_database_token(DatabaseToken.t(), map()) ::
+          {:ok, DatabaseToken.t()} | {:error, Ecto.Changeset.t()}
+  def update_database_token(%DatabaseToken{} = token, attrs) do
+    token
+    |> DatabaseToken.update_changeset(attrs)
+    |> Repo.update()
+    |> write_through(&ReadModel.put_database_token/1)
+  end
+
+  @spec delete_database_token(DatabaseToken.t()) ::
+          {:ok, DatabaseToken.t()} | {:error, Ecto.Changeset.t()}
+  def delete_database_token(%DatabaseToken{} = token) do
+    token
+    |> Repo.delete()
+    |> write_through(&ReadModel.delete_database_token(&1.id))
+  end
+
+  def create_database(%Tenant{} = tenant, attrs) do
+    max_databases = Sqlites.Limits.max_databases(tenant)
+
+    if is_integer(max_databases) and database_count(tenant) >= max_databases do
+      {:error, :database_limit_reached}
+    else
+      insert_database_with_default_token(tenant, attrs)
+    end
+  end
+
+  defp insert_database_with_default_token(tenant, attrs) do
+    Repo.transaction(fn ->
+      with {:ok, database} <-
+             Repo.insert(
+               Database.create_changeset(%Database{}, Map.put(attrs, "tenant_id", tenant.id))
+             ),
+           {:ok, token} <-
+             Repo.insert(
+               DatabaseToken.create_changeset(
+                 %DatabaseToken{database_id: database.id},
+                 %{"name" => "default"}
+               )
+             ) do
+        {database, token}
+      else
+        {:error, changeset} -> Repo.rollback(changeset)
+      end
+    end)
+    |> case do
+      {:ok, {database, token}} ->
+        write_through({:ok, database}, &ReadModel.put_database/1)
+        write_through({:ok, token}, &ReadModel.put_database_token/1)
+        {:ok, %{database | auth_token: token.token}}
+
+      {:error, changeset} ->
+        {:error, changeset}
+    end
+  end
+
+  defp database_count(%Tenant{id: tenant_id}) do
+    Database
+    |> where([d], d.tenant_id == ^tenant_id)
+    |> Repo.aggregate(:count)
   end
 
   def update_database_settings(%Database{} = database, attrs) do
@@ -136,6 +412,29 @@ defmodule Sqlites.ControlPlane do
     })
     |> Repo.update()
     |> write_through(&ReadModel.put_database/1)
+  end
+
+  @doc """
+  Records that a fresh idle snapshot of the database was shipped to the
+  object store: bumps `snapshot_generation` atomically and stamps
+  `last_snapshot_at`. Returns the updated row so the caller can record
+  the shipped generation locally.
+  """
+  @spec record_idle_snapshot(Database.t()) :: {:ok, Database.t()} | {:error, term()}
+  def record_idle_snapshot(%Database{id: id}) do
+    now = DateTime.utc_now()
+
+    Database
+    |> where([d], d.id == ^id)
+    |> select([d], d)
+    |> Repo.update_all(
+      inc: [snapshot_generation: 1],
+      set: [last_snapshot_at: now, updated_at: now]
+    )
+    |> case do
+      {1, [database]} -> write_through({:ok, database}, &ReadModel.put_database/1)
+      {0, _} -> {:error, :not_found}
+    end
   end
 
   def mark_deleting(%Database{} = database) do

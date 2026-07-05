@@ -68,4 +68,72 @@ defmodule Sqlites.DataPlaneTest do
     assert ControlPlane.get_database(database.id) == nil
     assert {:error, :not_found} = DataPlane.owner_node(database.id)
   end
+
+  describe "idle-snapshot shipping" do
+    test "a dirty idle-stop ships; activation on a fresh volume restores the data" do
+      tenant = tenant_fixture()
+      database = placed_database_fixture(tenant)
+
+      {:ok, _} = DataPlane.query(database.id, "CREATE TABLE t (v TEXT)")
+      {:ok, _} = DataPlane.query(database.id, "INSERT INTO t VALUES ('survives')")
+
+      assert :ok = DataPlane.idle_stop_database(database)
+      assert DataPlane.Registry.whereis(database.id) == :undefined
+      assert ControlPlane.get_database(database.id).snapshot_generation == 1
+
+      DataPlane.delete_local_files(database.file_path)
+
+      assert {:ok, %{rows: [["survives"]]}} = DataPlane.query(database.id, "SELECT v FROM t")
+      assert DataPlane.IdleSnapshots.local_generation(database.file_path) == 1
+    end
+
+    test "every session ships on idle-stop, even read-only ones" do
+      tenant = tenant_fixture()
+      database = placed_database_fixture(tenant)
+
+      {:ok, _} = DataPlane.query(database.id, "CREATE TABLE t (v TEXT)")
+      assert :ok = DataPlane.idle_stop_database(database)
+      assert ControlPlane.get_database(database.id).snapshot_generation == 1
+
+      assert {:ok, _} = DataPlane.query(database.id, "SELECT * FROM t")
+      database = ControlPlane.get_database(database.id)
+      assert :ok = DataPlane.idle_stop_database(database)
+
+      assert ControlPlane.get_database(database.id).snapshot_generation == 2
+    end
+
+    test "a stale local file is discarded and re-fetched" do
+      tenant = tenant_fixture()
+      database = placed_database_fixture(tenant)
+
+      {:ok, _} = DataPlane.query(database.id, "CREATE TABLE t (v TEXT)")
+      {:ok, _} = DataPlane.query(database.id, "INSERT INTO t VALUES ('current')")
+      assert :ok = DataPlane.idle_stop_database(database)
+
+      File.write!(database.file_path, "stale bytes from an old volume")
+      DataPlane.IdleSnapshots.write_local_generation(database.file_path, 0)
+
+      assert {:ok, %{rows: [["current"]]}} = DataPlane.query(database.id, "SELECT v FROM t")
+      assert DataPlane.IdleSnapshots.local_generation(database.file_path) == 1
+    end
+
+    test "remove_database/1 also deletes the idle snapshot object" do
+      tenant = tenant_fixture()
+      database = placed_database_fixture(tenant)
+
+      {:ok, _} = DataPlane.query(database.id, "CREATE TABLE t (v TEXT)")
+      assert :ok = DataPlane.idle_stop_database(database)
+
+      object_path =
+        Application.fetch_env!(:sqlites, :data_dir)
+        |> Path.join("object_store")
+        |> Path.join(DataPlane.IdleSnapshots.object_key(database))
+
+      assert File.exists?(object_path)
+
+      database = ControlPlane.get_database(database.id)
+      assert {:ok, _} = DataPlane.remove_database(database)
+      refute File.exists?(object_path)
+    end
+  end
 end

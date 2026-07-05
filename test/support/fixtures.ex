@@ -26,19 +26,27 @@ defmodule Sqlites.Fixtures do
     database
   end
 
-  def placed_database_fixture(tenant, attrs \\ %{}) do
-    {:ok, database} =
-      tenant
-      |> database_fixture(attrs)
-      |> Sqlites.DataPlane.place_database()
+  def placed_database_fixture(tenant, attrs \\ %{}, opts \\ []) do
+    database = database_fixture(tenant, attrs)
+
+    database =
+      case Keyword.get(opts, :limits) do
+        nil ->
+          database
+
+        limits ->
+          database
+          |> Ecto.Changeset.change(limits: limits)
+          |> Sqlites.Repo.update!()
+      end
+
+    {:ok, database} = Sqlites.DataPlane.place_database(database)
 
     ExUnit.Callbacks.on_exit(fn ->
       Sqlites.DataPlane.Supervisor.stop_database(database.id)
 
       if database.file_path do
-        File.rm(database.file_path)
-        File.rm(database.file_path <> "-wal")
-        File.rm(database.file_path <> "-shm")
+        Sqlites.DataPlane.delete_local_files(database.file_path)
       end
     end)
 

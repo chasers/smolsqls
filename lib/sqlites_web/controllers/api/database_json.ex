@@ -1,8 +1,8 @@
 defmodule SqlitesWeb.Api.DatabaseJSON do
   alias Sqlites.ControlPlane.Database
 
-  def index(%{databases: databases}) do
-    %{data: Enum.map(databases, &data(&1, false))}
+  def index(%{databases: databases, next: next}) do
+    %{data: Enum.map(databases, &data(&1, false)), next: next}
   end
 
   def show(%{database: database, include_token: include_token}) do
@@ -18,12 +18,18 @@ defmodule SqlitesWeb.Api.DatabaseJSON do
       created_at: database.inserted_at
     }
 
-    if include_token do
-      base
-      |> Map.put(:auth_token, database.auth_token)
-      |> Map.put(:connections, connections(database))
-    else
-      base
+    cond do
+      include_token and is_binary(database.auth_token) ->
+        base
+        |> Map.put(:auth_token, database.auth_token)
+        |> Map.put(:limits, Sqlites.Limits.resolve(database))
+        |> Map.put(:connections, connections(database))
+
+      include_token ->
+        Map.put(base, :limits, Sqlites.Limits.resolve(database))
+
+      true ->
+        base
     end
   end
 

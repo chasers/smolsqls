@@ -11,27 +11,54 @@ defmodule Sqlites.ReadModel.SnapshotTest do
     :ok
   end
 
-  test "loads tenants and databases into the read model via COPY" do
+  test "loads tenants, databases, and their secrets into the read model via COPY" do
     tenant = tenant_fixture()
     database = database_fixture(tenant)
     placed = placed_database_fixture(tenant)
 
     assert :ok = Snapshot.load()
 
-    loaded_tenant = ReadModel.get_tenant_by_api_key(tenant.api_key)
-    assert loaded_tenant.id == tenant.id
-    assert loaded_tenant.slug == tenant.slug
+    loaded_key = ReadModel.get_tenant_api_key_by_hash(Sqlites.Secrets.hash(tenant.api_key))
+    assert loaded_key.tenant_id == tenant.id
+    assert ReadModel.get_tenant(tenant.id).slug == tenant.slug
 
     loaded = ReadModel.get_database(database.id)
     assert loaded.tenant_id == tenant.id
     assert loaded.status == :pending
     assert loaded.node == nil
-    assert ReadModel.get_database_by_auth_token(database.auth_token).id == database.id
+
+    loaded_token =
+      ReadModel.get_database_token_by_hash(Sqlites.Secrets.hash(database.auth_token))
+
+    assert loaded_token.database_id == database.id
+    assert loaded_token.enabled
 
     loaded_placed = ReadModel.get_database(placed.id)
     assert loaded_placed.status == :active
     assert loaded_placed.node == to_string(Node.self())
     assert loaded_placed.file_path == placed.file_path
+  end
+
+  test "limits and snapshot_generation ride the COPY snapshot" do
+    tenant = tenant_fixture()
+
+    {:ok, tenant} =
+      tenant
+      |> Ecto.Changeset.change(limits: %{"max_databases" => 3})
+      |> Sqlites.Repo.update()
+
+    database = placed_database_fixture(tenant, %{}, limits: %{"rate_limit_rps" => 9})
+
+    {:ok, _} = Sqlites.DataPlane.query(database.id, "CREATE TABLE t (v TEXT)")
+    assert :ok = Sqlites.DataPlane.idle_stop_database(database)
+
+    assert :ok = Snapshot.load()
+
+    assert ReadModel.get_tenant(tenant.id).limits == %{"max_databases" => 3}
+
+    loaded = ReadModel.get_database(database.id)
+    assert loaded.limits == %{"rate_limit_rps" => 9}
+    assert loaded.snapshot_generation == 1
   end
 
   test "authenticate paths serve from the read model once ready" do

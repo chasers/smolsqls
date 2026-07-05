@@ -1,8 +1,8 @@
 defmodule SqlitesWeb.Api.BackupJSON do
   alias Sqlites.ControlPlane.Backup
 
-  def index(%{backups: backups}) do
-    %{data: Enum.map(backups, &data/1)}
+  def index(%{backups: backups, next: next}) do
+    %{data: Enum.map(backups, &data/1), next: next}
   end
 
   def show(%{backup: backup}) do

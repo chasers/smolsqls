@@ -8,10 +8,13 @@ defmodule SqlitesOperator.Controller.SqliteNodeController do
   becomes an incident) and the node's database count from the
   control-plane `databases` table.
 
-  Drain (`spec.drain: true`) marks the intent to evacuate; the actual
-  re-placement is executed by the control plane's failover path and
-  reported back here. On delete, the node's replication slot is
-  dropped so a decommissioned node can never bloat WAL retention.
+  Drain (`spec.drain: true`) inserts a request row into the metadb's
+  `node_drains` table — the data plane's drain worker claims it,
+  idle-stops hot databases so their snapshots ship, and reassigns
+  placement rows; this controller only reports the request's progress
+  on `status.drain`. Re-draining a node requires deleting its
+  `node_drains` row. On delete, the node's replication slot is dropped
+  so a decommissioned node can never bloat WAL retention.
   """
 
   use Bonny.ControllerV2
@@ -29,6 +32,7 @@ defmodule SqlitesOperator.Controller.SqliteNodeController do
   def handle_event(%Bonny.Axn{action: action} = axn, _opts)
       when action in [:add, :modify, :reconcile] do
     axn
+    |> ensure_drain_requested()
     |> refresh_status()
     |> success_event()
   end
@@ -52,8 +56,67 @@ defmodule SqlitesOperator.Controller.SqliteNodeController do
       status
       |> Map.put("replicationSlot", slot_status(slot))
       |> Map.put("databaseCount", database_count(erlang_node))
+      |> Map.put("drain", drain_status(erlang_node))
     end)
   end
+
+  defp ensure_drain_requested(axn) do
+    erlang_node = get_in(axn.resource, ["spec", "erlangNode"])
+
+    if get_in(axn.resource, ["spec", "drain"]) == true and is_binary(erlang_node) do
+      query = """
+      INSERT INTO node_drains (node, requested_at)
+      VALUES ($1, now()) ON CONFLICT (node) DO NOTHING
+      """
+
+      case metadb_query(query, [erlang_node]) do
+        {:ok, _} -> :ok
+        {:error, reason} -> Logger.error("drain request insert failed: #{inspect(reason)}")
+      end
+    end
+
+    axn
+  end
+
+  defp drain_status(nil), do: nil
+
+  defp drain_status(erlang_node) do
+    query = """
+    SELECT requested_at, started_at, started_by, completed_at, reassigned, error
+    FROM node_drains WHERE node = $1
+    """
+
+    case metadb_query(query, [erlang_node]) do
+      {:ok, %{rows: [[requested_at, started_at, started_by, completed_at, reassigned, error]]}} ->
+        %{
+          "phase" => drain_phase(started_at, completed_at, error),
+          "requestedAt" => timestamp(requested_at),
+          "startedAt" => timestamp(started_at),
+          "startedBy" => started_by,
+          "completedAt" => timestamp(completed_at),
+          "reassigned" => reassigned,
+          "error" => error
+        }
+
+      {:ok, %{rows: []}} ->
+        nil
+
+      {:error, reason} ->
+        Logger.error("drain status query failed: #{inspect(reason)}")
+        nil
+    end
+  end
+
+  defp drain_phase(_started_at, completed_at, error) when not is_nil(completed_at) do
+    if error, do: "Failed", else: "Completed"
+  end
+
+  defp drain_phase(started_at, _completed_at, _error) when not is_nil(started_at), do: "Running"
+  defp drain_phase(_started_at, _completed_at, _error), do: "Requested"
+
+  defp timestamp(nil), do: nil
+  defp timestamp(%NaiveDateTime{} = naive), do: NaiveDateTime.to_iso8601(naive) <> "Z"
+  defp timestamp(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
 
   defp slot_status(slot) do
     query = """

@@ -6,9 +6,11 @@ defmodule SqlitesWeb.Api.BackupController do
 
   action_fallback SqlitesWeb.Api.FallbackController
 
-  def index(conn, %{"database_id" => database_id}) do
-    with {:ok, database} <- fetch_database(conn, database_id) do
-      render(conn, :index, backups: Backups.list(database))
+  def index(conn, %{"database_id" => database_id} = params) do
+    with {:ok, database} <- fetch_database(conn, database_id),
+         {:ok, page_opts} <- SqlitesWeb.Api.Pagination.opts(params),
+         {:ok, page} <- Backups.paginate(database, page_opts) do
+      render(conn, :index, backups: page.entries, next: page.next)
     end
   end
 

@@ -5,9 +5,11 @@ defmodule SqlitesWeb.Api.DatabaseController do
 
   action_fallback SqlitesWeb.Api.FallbackController
 
-  def index(conn, _params) do
-    databases = ControlPlane.list_databases(conn.assigns.current_tenant)
-    render(conn, :index, databases: databases)
+  def index(conn, params) do
+    with {:ok, page_opts} <- SqlitesWeb.Api.Pagination.opts(params),
+         {:ok, page} <- ControlPlane.paginate_databases(conn.assigns.current_tenant, page_opts) do
+      render(conn, :index, databases: page.entries, next: page.next)
+    end
   end
 
   def create(conn, params) do

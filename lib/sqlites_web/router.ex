@@ -37,6 +37,12 @@ defmodule SqlitesWeb.Router do
     post "/databases/:database_id/query", QueryController, :create
   end
 
+  scope "/v2", SqlitesWeb.Hrana do
+    pipe_through :api
+
+    post "/pipeline", PipelineController, :create
+  end
+
   scope "/v1", SqlitesWeb.Api do
     pipe_through [:api, :api_authenticated]
 
@@ -44,7 +50,19 @@ defmodule SqlitesWeb.Router do
     patch "/tenant", TenantController, :update
     delete "/tenant", TenantController, :delete
 
+    resources "/tenant/keys", TenantApiKeyController,
+      only: [:index, :create, :update, :delete],
+      name: :tenant_api_key
+
+    post "/tenant/keys/:id/reveal", TenantApiKeyController, :reveal
+
     resources "/databases", DatabaseController, only: [:index, :create, :show, :update, :delete]
+
+    resources "/databases/:database_id/tokens", DatabaseTokenController,
+      only: [:index, :create, :update, :delete],
+      name: :database_token
+
+    post "/databases/:database_id/tokens/:id/reveal", DatabaseTokenController, :reveal
 
     get "/databases/:database_id/backups", BackupController, :index
     post "/databases/:database_id/backups", BackupController, :create

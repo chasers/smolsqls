@@ -33,7 +33,39 @@ defmodule SqlitesWeb.Api.IndexController do
           body: %{name: "..."}
         },
         %{method: "DELETE", path: "#{base}/v1/tenant", auth: "tenant api_key"},
-        %{method: "GET", path: "#{base}/v1/databases", auth: "tenant api_key"},
+        %{
+          method: "GET",
+          path: "#{base}/v1/tenant/keys",
+          auth: "tenant api_key",
+          returns: "key metadata only — secrets come from create or reveal"
+        },
+        %{
+          method: "POST",
+          path: "#{base}/v1/tenant/keys",
+          auth: "tenant api_key",
+          body: %{name: "ci", expires_at: "2027-01-01T00:00:00Z"},
+          returns: "a new permanent API key; name and expires_at are optional"
+        },
+        %{
+          method: "POST",
+          path: "#{base}/v1/tenant/keys/:id/reveal",
+          auth: "tenant api_key",
+          returns: "the key's secret, decrypted on explicit request"
+        },
+        %{
+          method: "PATCH",
+          path: "#{base}/v1/tenant/keys/:id",
+          auth: "tenant api_key",
+          body: %{enabled: false},
+          returns: "enable/disable a key (the last usable key cannot be disabled)"
+        },
+        %{method: "DELETE", path: "#{base}/v1/tenant/keys/:id", auth: "tenant api_key"},
+        %{
+          method: "GET",
+          path: "#{base}/v1/databases?after=<id>&limit=<n>",
+          auth: "tenant api_key",
+          returns: "page of databases plus a next cursor (null on the last page)"
+        },
         %{
           method: "POST",
           path: "#{base}/v1/databases",
@@ -51,13 +83,49 @@ defmodule SqlitesWeb.Api.IndexController do
         },
         %{method: "DELETE", path: "#{base}/v1/databases/:id", auth: "tenant api_key"},
         %{
+          method: "GET",
+          path: "#{base}/v1/databases/:id/tokens",
+          auth: "tenant api_key",
+          returns: "token metadata only — secrets come from create or reveal"
+        },
+        %{
+          method: "POST",
+          path: "#{base}/v1/databases/:id/tokens",
+          auth: "tenant api_key",
+          body: %{name: "worker", expires_at: "2027-01-01T00:00:00Z"},
+          returns: "a new permanent database token; name and expires_at are optional"
+        },
+        %{
+          method: "POST",
+          path: "#{base}/v1/databases/:id/tokens/:token_id/reveal",
+          auth: "tenant api_key",
+          returns: "the token's secret, decrypted on explicit request"
+        },
+        %{
+          method: "PATCH",
+          path: "#{base}/v1/databases/:id/tokens/:token_id",
+          auth: "tenant api_key",
+          body: %{enabled: false},
+          returns: "enable/disable a token"
+        },
+        %{
+          method: "DELETE",
+          path: "#{base}/v1/databases/:id/tokens/:token_id",
+          auth: "tenant api_key"
+        },
+        %{
           method: "POST",
           path: "#{base}/v1/databases/:id/query",
           auth: "database auth_token",
           body: %{sql: "SELECT * FROM t WHERE id = ?", args: [1]},
           returns: "columns, rows, num_changes"
         },
-        %{method: "GET", path: "#{base}/v1/databases/:id/backups", auth: "tenant api_key"},
+        %{
+          method: "GET",
+          path: "#{base}/v1/databases/:id/backups?after=<id>&limit=<n>",
+          auth: "tenant api_key",
+          returns: "page of backups plus a next cursor (null on the last page)"
+        },
         %{method: "POST", path: "#{base}/v1/databases/:id/backups", auth: "tenant api_key"},
         %{
           method: "POST",

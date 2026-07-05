@@ -28,6 +28,20 @@ defmodule Sqlites.ReadModel.Snapshot do
             &ReadModel.put_database/1
           )
 
+          load_table(
+            :tenant_api_keys,
+            Row.tenant_api_key_columns(),
+            &Row.build_tenant_api_key/1,
+            &ReadModel.put_tenant_api_key/1
+          )
+
+          load_table(
+            :database_tokens,
+            Row.database_token_columns(),
+            &Row.build_database_token/1,
+            &ReadModel.put_database_token/1
+          )
+
           :ok
         end,
         timeout: :timer.minutes(5)

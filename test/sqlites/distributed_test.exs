@@ -46,6 +46,7 @@ defmodule Sqlites.DistributedTest do
       ])
 
     {:ok, _} = :erpc.call(peer_node, Application, :ensure_all_started, [:sqlites])
+    :ok = :erpc.call(peer_node, Ecto.Adapters.SQL.Sandbox, :mode, [Sqlites.Repo, :auto])
 
     previous_config = Application.get_env(:gen_rpc, :client_config_per_node)
 
@@ -145,6 +146,85 @@ defmodule Sqlites.DistributedTest do
 
     wait_until(fn -> Registry.whereis(database_id) == :undefined end)
     assert {:error, :database_not_running} = Router.query(database_id, "SELECT 1")
+  end
+
+  test "a database idled on one node activates on another with its data",
+       %{peer_node: peer_node} do
+    database = checked_out_shipped_database()
+
+    {:ok, _} =
+      database
+      |> Sqlites.ControlPlane.Database.placement_changeset(%{
+        status: :active,
+        node: to_string(peer_node)
+      })
+      |> Sqlites.Repo.update()
+
+    database = Sqlites.ControlPlane.get_database(database.id)
+    assert database.snapshot_generation == 1
+
+    assert {:ok, pid} = Sqlites.DataPlane.activate_database(database)
+    assert node(pid) == peer_node
+
+    wait_until(fn -> Registry.whereis(database.id) == pid end)
+    assert {:ok, %{rows: [["survives"]]}} = Router.query(database.id, "SELECT v FROM t")
+  end
+
+  test "draining a live node hands off hot databases and reassigns placement",
+       %{peer_node: peer_node} do
+    database = checked_out_shipped_database()
+
+    {:ok, _} =
+      database
+      |> Sqlites.ControlPlane.Database.placement_changeset(%{
+        status: :active,
+        node: to_string(peer_node)
+      })
+      |> Sqlites.Repo.update()
+
+    database = Sqlites.ControlPlane.get_database(database.id)
+    assert {:ok, pid} = Sqlites.DataPlane.activate_database(database)
+    assert node(pid) == peer_node
+    wait_until(fn -> Registry.whereis(database.id) == pid end)
+
+    assert {:ok, %{reassigned: 1, handed_off: 1}} = Sqlites.Drain.drain(to_string(peer_node))
+
+    wait_until(fn -> Registry.whereis(database.id) == :undefined end)
+    assert Sqlites.ControlPlane.get_database(database.id).node == to_string(Node.self())
+
+    assert {:ok, %{rows: [["survives"]]}} = Router.query(database.id, "SELECT v FROM t")
+    assert {:ok, owner} = Registry.owner_node(database.id)
+    assert owner == Node.self()
+  end
+
+  defp checked_out_shipped_database do
+    Ecto.Adapters.SQL.Sandbox.checkout(Sqlites.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(Sqlites.Repo, {:shared, self()})
+
+    tenant = Sqlites.Fixtures.tenant_fixture()
+    database = Sqlites.Fixtures.database_fixture(tenant)
+
+    {:ok, database} = Sqlites.DataPlane.place_database_locally(database)
+
+    on_exit(fn ->
+      case Registry.whereis(database.id) do
+        pid when is_pid(pid) ->
+          if node(pid) == Node.self(), do: GenServer.stop(pid, :normal)
+
+        :undefined ->
+          :ok
+      end
+
+      Sqlites.DataPlane.delete_local_files(database.file_path)
+    end)
+
+    {:ok, _} = Router.query(database.id, "CREATE TABLE t (v TEXT)")
+    {:ok, _} = Router.query(database.id, "INSERT INTO t VALUES ('survives')")
+
+    :ok = Sqlites.DataPlane.idle_stop_database(database)
+    Sqlites.DataPlane.delete_local_files(database.file_path)
+
+    Sqlites.ControlPlane.get_database(database.id)
   end
 
   test "reconciler does not reclaim databases owned by a live node",

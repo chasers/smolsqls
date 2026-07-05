@@ -37,6 +37,65 @@ defmodule SqlitesWeb.Api.FallbackController do
     })
   end
 
+  def call(conn, {:error, :database_limit_reached}) do
+    conn
+    |> put_status(:forbidden)
+    |> json(%{
+      error: %{
+        code: "database_limit_reached",
+        message: "tenant has reached its database limit"
+      }
+    })
+  end
+
+  def call(conn, {:error, :last_api_key}) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{
+      error: %{
+        code: "last_api_key",
+        message: "cannot disable or delete the tenant's last usable API key"
+      }
+    })
+  end
+
+  def call(conn, {:error, :rate_limited}) do
+    conn
+    |> put_status(:too_many_requests)
+    |> json(%{error: %{code: "rate_limited", message: "database rate limit exceeded"}})
+  end
+
+  def call(conn, {:error, :query_timeout}) do
+    conn
+    |> put_status(:request_timeout)
+    |> json(%{error: %{code: "query_timeout", message: "query timed out"}})
+  end
+
+  def call(conn, {:error, :transactions_not_supported}) do
+    conn
+    |> put_status(:bad_request)
+    |> json(%{
+      error: %{
+        code: "transactions_not_supported",
+        message:
+          "interactive transactions (BEGIN/COMMIT/ROLLBACK/SAVEPOINT) are not supported; " <>
+            "statements run in autocommit mode"
+      }
+    })
+  end
+
+  def call(conn, {:error, :invalid_cursor}) do
+    conn
+    |> put_status(:bad_request)
+    |> json(%{error: %{code: "invalid_cursor", message: "\"after\" does not reference a row"}})
+  end
+
+  def call(conn, {:error, :invalid_limit}) do
+    conn
+    |> put_status(:bad_request)
+    |> json(%{error: %{code: "invalid_limit", message: "\"limit\" must be a positive integer"}})
+  end
+
   def call(conn, {:error, :missing_sql}) do
     conn
     |> put_status(:bad_request)

@@ -128,4 +128,145 @@ defmodule SqlitesWeb.Hrana.SocketTest do
     assert %{"type" => "response_error", "error" => %{"message" => message}} = response
     assert message =~ "syntax error"
   end
+
+  test "rejects BEGIN cleanly instead of leaking transaction state", %{database: database} do
+    state = connected_state(database)
+
+    {response, state} = execute("BEGIN", [], state)
+    assert %{"type" => "response_error", "error" => %{"message" => message}} = response
+    assert message =~ "transactions"
+
+    {response, _state} = execute("SELECT 1", [], state)
+    assert %{"type" => "response_ok"} = response
+  end
+
+  test "binds named args", %{database: database} do
+    state = connected_state(database)
+
+    {_response, state} = execute("CREATE TABLE t (a TEXT, b INTEGER)", [], state)
+
+    {response, state} =
+      send_message(
+        %{
+          type: "request",
+          request_id: 4,
+          request: %{
+            type: "execute",
+            stream_id: 1,
+            stmt: %{
+              sql: "INSERT INTO t VALUES (:a, @b)",
+              named_args: [
+                %{name: "a", value: %{type: "text", value: "named"}},
+                %{name: "@b", value: %{type: "integer", value: "7"}}
+              ],
+              want_rows: false
+            }
+          }
+        },
+        state
+      )
+
+    assert %{"response" => %{"result" => %{"affected_row_count" => 1}}} = response
+
+    {response, _state} = execute("SELECT a, b FROM t", [], state)
+
+    assert %{
+             "response" => %{
+               "result" => %{
+                 "rows" => [
+                   [
+                     %{"type" => "text", "value" => "named"},
+                     %{"type" => "integer", "value" => "7"}
+                   ]
+                 ]
+               }
+             }
+           } = response
+  end
+
+  test "describe returns cols and param count without executing", %{database: database} do
+    state = connected_state(database)
+    {_response, state} = execute("CREATE TABLE t (id INTEGER, v TEXT)", [], state)
+
+    {response, _state} =
+      send_message(
+        %{
+          type: "request",
+          request_id: 5,
+          request: %{type: "describe", stream_id: 1, sql: "SELECT id, v FROM t WHERE id = ?"}
+        },
+        state
+      )
+
+    assert %{
+             "type" => "response_ok",
+             "response" => %{
+               "type" => "describe",
+               "result" => %{
+                 "cols" => [%{"name" => "id"}, %{"name" => "v"}],
+                 "params" => [%{"name" => nil}],
+                 "is_readonly" => true
+               }
+             }
+           } = response
+  end
+
+  test "sequence executes a multi-statement script", %{database: database} do
+    state = connected_state(database)
+
+    {response, state} =
+      send_message(
+        %{
+          type: "request",
+          request_id: 6,
+          request: %{
+            type: "sequence",
+            stream_id: 1,
+            sql: "CREATE TABLE seq_t (v TEXT); INSERT INTO seq_t VALUES ('a'), ('b');"
+          }
+        },
+        state
+      )
+
+    assert %{"type" => "response_ok", "response" => %{"type" => "sequence"}} = response
+
+    {response, _state} = execute("SELECT count(*) FROM seq_t", [], state)
+    assert %{"response" => %{"result" => %{"rows" => [[%{"value" => "2"}]]}}} = response
+  end
+
+  test "batch reports per-step errors", %{database: database} do
+    state = connected_state(database)
+
+    {response, _state} =
+      send_message(
+        %{
+          type: "request",
+          request_id: 8,
+          request: %{
+            type: "batch",
+            stream_id: 1,
+            batch: %{
+              steps: [
+                %{stmt: %{sql: "CREATE TABLE b (v TEXT)", want_rows: false}},
+                %{stmt: %{sql: "BEGIN", want_rows: false}},
+                %{stmt: %{sql: "INSERT INTO b VALUES ('x')", want_rows: false}}
+              ]
+            }
+          }
+        },
+        state
+      )
+
+    assert %{
+             "type" => "response_ok",
+             "response" => %{
+               "result" => %{
+                 "step_results" => [%{}, nil, %{}],
+                 "step_errors" => [nil, %{"message" => message}, nil]
+               }
+             }
+           } = response
+
+    assert message =~ "transactions"
+  end
 end

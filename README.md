@@ -34,15 +34,66 @@ On boot each node walks its data volume and claims any database whose
 file is local but whose record points elsewhere — the volume, not the
 node name, is the source of truth for placement.
 
+**Storage portability**: S3 is the source of truth for cold databases;
+node volumes are caches. When a database server idle-stops, it ships a
+`VACUUM INTO` snapshot to
+`idle-snapshots/<tenant>/<db>/latest.db` and bumps a
+`snapshot_generation` in the metadb. (Every session ships — skipping
+the upload for read-only sessions is deferred until statements can be
+classified by a real SQL parser rather than heuristics.) Activation
+trusts placement + generation, never bare file
+presence: a cached file whose `<file>.generation` sidecar is behind
+the metadb is discarded and re-fetched, and a missing file restores
+via litestream replica (premium) → idle snapshot → latest manual
+backup. This makes placement free: draining a node is metadata-only
+for anything already shipped (`Sqlites.Drain`, driven by the operator
+through the `node_drains` metadb table), and an optional LRU cache
+evictor (`CACHE_EVICTION_ENABLED` / `CACHE_HIGH_WATER_BYTES`) keeps
+volumes under a high-water mark by deleting cold, provably-shipped
+files.
+
 **Client access** — no custom client needed:
 
 - **libSQL / Hrana**: any stock libSQL client (`@libsql/client`, etc.)
   connects with the `libsql://host:port?authToken=...` string returned
   at creation time. The server speaks a Hrana v1/v2 subset over
-  WebSocket; the auth token identifies the database.
+  WebSocket (`execute`, `batch`, `store_sql`, `named_args`,
+  `describe`, `sequence`); the auth token identifies the database.
+  Interactive transactions (`BEGIN`) are rejected cleanly — statements
+  run in autocommit mode.
+- **Hrana over HTTP**: `POST /v2/pipeline` (stateless, batons
+  unsupported) for `http://` libsql URLs and edge runtimes.
 - **Plain HTTP**: `POST /v1/databases/:id/query` with
   `{"sql": "...", "args": [...]}` and the database auth token as a
   Bearer token.
+
+**Quotas & limits** are rows, not config: a `limits` map on `tenants`
+with per-database overrides on `databases`, falling back to cluster
+defaults (`config :sqlites, Sqlites.Limits`). Resolution is
+database → tenant → default, served from the read model. The set:
+`max_databases` (create time), `max_size_bytes`
+(`PRAGMA max_page_count` at activation), `rate_limit_rps` (per-node
+fixed window at the protocol edge), `query_timeout_ms`,
+`statement_timeout_ms` (server-side `sqlite3_interrupt` of runaway
+statements), `idle_ttl_ms`, and `max_hot_ms`. Resolved limits are
+exposed read-only on the database/tenant show endpoints; there is no
+public mutation path yet.
+
+**Token lifecycle**: credentials are managed rows, not columns on the
+owner. A database holds any number of permanent tokens
+(`/v1/databases/:id/tokens`) and a tenant any number of API keys
+(`/v1/tenant/keys`) — create (optionally with `expires_at`),
+enable/disable (`PATCH {enabled: false}`), and delete, each
+independently; revocation propagates immediately through the read
+model. Creating a database or tenant creates a `default` secret and
+returns it. At rest a secret is a SHA-256 hash (the auth lookup key)
+plus an AES-256-GCM ciphertext (`TOKEN_ENCRYPTION_KEY`, falling back
+to `SECRET_KEY_BASE`) — never plaintext, never logged. Secrets appear
+only in create responses and explicit `POST .../reveal` calls, which
+is also how the dashboard shows connection strings. The last usable
+tenant key cannot be disabled or deleted. List endpoints
+cursor-paginate with `?after=<id>&limit=<n>` and return a `next`
+cursor.
 
 **Durability** is an infrastructure concern owned by the Kubernetes
 operator in [`operator/`](operator/): PVC-backed data directories,
@@ -119,7 +170,12 @@ identity model), each pod running a Litestream sidecar that databases
 are registered with dynamically over a control socket. The
 [operator](operator/) tracks one `SqliteNode` CR per data-plane node —
 never per database — reporting replication-slot health and database
-counts onto `kubectl get sqlitenodes`.
+counts onto `kubectl get sqlitenodes`. Setting `spec.drain: true`
+inserts a request into the metadb's `node_drains` table; the data
+plane's drain worker claims it, idle-stops hot databases (shipping
+their snapshots), reassigns placement rows to the survivors, and the
+operator reports progress on `status.drain`. Re-draining a node
+requires deleting its `node_drains` row.
 
 Local end-to-end cluster (kind + in-cluster Postgres with
 `wal_level=logical` + MinIO):
