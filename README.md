@@ -221,6 +221,12 @@ Local end-to-end cluster (kind + in-cluster Postgres with
 curl http://localhost:8080/v1
 ```
 
+`kubectl` here is scoped to the local `kind-smolsqls` cluster via
+[direnv](https://direnv.net): `.envrc` exports `KUBECONFIG=$PWD/.kube/config`, a
+gitignored single-context kubeconfig (run `direnv allow` once). Regenerate it
+with `mkdir -p .kube && kubectl config view --minify --flatten --context
+kind-smolsqls > .kube/config`.
+
 The `FORCE_SSL` Docker build arg (default `true`) gates the compile-time
 `force_ssl` redirect; build with `--build-arg FORCE_SSL=false` when the
 endpoint sits behind a plain-HTTP load balancer. A full GCP/GKE deployment

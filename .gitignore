@@ -48,3 +48,6 @@ npm-debug.log
 /.elixir_ls/
 /.claude/settings.local.json
 deploy/overlays/kind/tls/
+
+# Repo-local scoped kubeconfig (pins kubectl to kind-smolsqls; holds a client key).
+.kube/
