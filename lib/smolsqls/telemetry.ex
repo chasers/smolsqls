@@ -15,6 +15,11 @@ defmodule Smolsqls.Telemetry do
     * `[:smolsqls, :idle_snapshot, :ship]` — `%{count, duration_ms}`,
       tag `result` (`ok` | `error`)
     * `[:smolsqls, :cache_evictor, :sweep]` — `%{evicted, freed_bytes}`
+    * `[:smolsqls, :backup_sweep]` — `%{due, backed_up}` (daily-backup
+      guarantee; one sweep per cluster per tick)
+    * `[:smolsqls, :backup_sla]` — `%{in_breach, oldest_age_seconds}`
+      (polled; active databases past the daily-backup window and the
+      worst backup gap across the fleet)
     * `[:smolsqls, :node_operation]` — `%{count, reassigned}`, tags
       `kind` (`drain` | `evacuate`), `result` (`ok` | `error` |
       `cancelled`)
@@ -59,6 +64,11 @@ defmodule Smolsqls.Telemetry do
     )
   end
 
+  @spec backup_sweep(non_neg_integer(), non_neg_integer()) :: :ok
+  def backup_sweep(due, backed_up) do
+    :telemetry.execute([:smolsqls, :backup_sweep], %{due: due, backed_up: backed_up}, %{})
+  end
+
   @spec node_operation(String.t(), atom(), non_neg_integer()) :: :ok
   def node_operation(kind, result, reassigned \\ 0) do
     :telemetry.execute(
@@ -85,5 +95,31 @@ defmodule Smolsqls.Telemetry do
   def emit_hot_servers do
     count = :syn.registry_count(Smolsqls.DataPlane.Registry.scope(), Node.self())
     :telemetry.execute([:smolsqls, :hot_servers], %{count: count}, %{})
+  end
+
+  @doc """
+  Poller measurement for the daily-backup SLA: emits how many active
+  databases are past the backup window and the worst backup gap. Runs
+  on every node against the metadb independently of the sweeper, so a
+  dead or stuck sweeper does not blind the alert; failures are swallowed
+  so a transient metadb hiccup never crashes the poller.
+  """
+  @spec emit_backup_sla() :: :ok
+  def emit_backup_sla do
+    %{in_breach: in_breach, oldest_age_seconds: oldest_age_seconds} =
+      Smolsqls.Backups.sla_stats(sla_breach_ms())
+
+    :telemetry.execute(
+      [:smolsqls, :backup_sla],
+      %{in_breach: in_breach, oldest_age_seconds: oldest_age_seconds},
+      %{}
+    )
+  rescue
+    _ -> :ok
+  end
+
+  defp sla_breach_ms do
+    Application.get_env(:smolsqls, Smolsqls.Backups.Sweeper, [])[:sla_breach_ms] ||
+      :timer.hours(28)
   end
 end

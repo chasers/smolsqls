@@ -13,7 +13,8 @@ defmodule SmolsqlsWeb.Api.BackupJSON do
     %{
       id: backup.id,
       created_at: backup.inserted_at,
-      size_bytes: backup.size_bytes
+      size_bytes: backup.size_bytes,
+      origin: backup.origin
     }
   end
 end

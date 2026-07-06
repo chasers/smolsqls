@@ -7,6 +7,8 @@ config :smolsqls,
 
 config :smolsqls, Smolsqls.ReadModel, enabled: false
 
+config :smolsqls, SmolsqlsWeb.Telemetry, backup_sla_poller: false
+
 config :smolsqls, Smolsqls.ObjectStore, adapter: Smolsqls.ObjectStore.Local
 
 config :gen_rpc, tcp_server_port: 15369

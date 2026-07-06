@@ -34,6 +34,21 @@ defmodule Smolsqls.ObjectStore.Local do
     :ok
   end
 
+  @impl true
+  def copy(source_key, dest_key) do
+    source = object_path(source_key)
+
+    if File.exists?(source) do
+      dest = object_path(dest_key)
+      File.mkdir_p!(Path.dirname(dest))
+      File.cp!(source, dest)
+      %File.Stat{size: size} = File.stat!(dest)
+      {:ok, size}
+    else
+      {:error, :not_found}
+    end
+  end
+
   defp object_path(key) do
     Application.fetch_env!(:smolsqls, :data_dir)
     |> Path.join("object_store")

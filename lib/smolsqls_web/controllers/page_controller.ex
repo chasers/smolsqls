@@ -11,6 +11,7 @@ defmodule SmolsqlsWeb.PageController do
     [
       {"Databases per account", format_count(defaults.max_databases)},
       {"Size per database", format_bytes(defaults.max_size_bytes)},
+      {"Backups", "daily"},
       {"Query timeout", format_ms(defaults.query_timeout_ms)},
       {"Statement timeout", format_ms(defaults.statement_timeout_ms)},
       {"Transaction lease", format_ms(defaults.txn_timeout_ms)}

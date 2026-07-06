@@ -449,8 +449,14 @@ defmodule SmolsqlsWeb.DatabaseLive.Index do
                       :for={backup <- @backups}
                       class="flex flex-wrap items-center justify-between gap-2"
                     >
-                      <span class="font-mono text-xs">
+                      <span class="flex flex-wrap items-center gap-2 font-mono text-xs">
                         {Calendar.strftime(backup.inserted_at, "%Y-%m-%d %H:%M:%S UTC")} · {backup.size_bytes} bytes
+                        <span class={[
+                          "badge badge-xs badge-soft",
+                          backup.origin == :automatic && "badge-info"
+                        ]}>
+                          {backup.origin}
+                        </span>
                       </span>
                       <button
                         class="btn btn-ghost btn-xs"

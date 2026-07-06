@@ -8,6 +8,7 @@ defmodule Smolsqls.ControlPlane.Backup do
   schema "backups" do
     field :object_key, :string
     field :size_bytes, :integer
+    field :origin, Ecto.Enum, values: [:manual, :automatic], default: :manual
 
     belongs_to :database, Smolsqls.ControlPlane.Database
 

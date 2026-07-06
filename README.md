@@ -52,6 +52,17 @@ evictor (`CACHE_EVICTION_ENABLED` / `CACHE_HIGH_WATER_BYTES`) keeps
 volumes under a high-water mark by deleting cold, provably-shipped
 files.
 
+**Daily backups**: every database is guaranteed at least one backup a
+day. A cluster-singleton sweeper (`Smolsqls.Backups.Sweeper`, one node
+at a time via a Postgres advisory lock) finds databases whose newest
+backup is older than 24h and produces an `automatic` backup for each —
+promoting the existing idle snapshot with a server-side object-store
+copy for a cold database (no activation) and snapshotting the live
+writer for a hot one. These appear in the backups list alongside
+`manual` backups. This is a daily *artifact* floor, not point-in-time
+recovery; continuous durability for premium databases is litestream's
+job.
+
 **Client access** — no custom client needed:
 
 - **libSQL / Hrana**: any stock libSQL client (`@libsql/client`, etc.)

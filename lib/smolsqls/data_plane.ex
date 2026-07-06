@@ -363,6 +363,13 @@ defmodule Smolsqls.DataPlane do
   @spec owner_node(String.t()) :: {:ok, node()} | {:error, :not_found}
   def owner_node(database_id), do: Registry.owner_node(database_id)
 
+  @doc """
+  Whether a database currently has a running server anywhere in the
+  cluster (resolved through the cluster-wide `:syn` registry).
+  """
+  @spec database_hot?(String.t()) :: boolean()
+  def database_hot?(database_id), do: Registry.whereis(database_id) != :undefined
+
   defp file_path_for(%Database{} = database) do
     data_dir()
     |> Path.join(database.tenant_id)

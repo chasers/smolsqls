@@ -105,6 +105,8 @@ if config_env() == :prod do
 
   config :smolsqls, Smolsqls.DataPlane.Fence, enabled: true
 
+  config :smolsqls, Smolsqls.Backups.Sweeper, enabled: true
+
   if gen_rpc_port = System.get_env("GEN_RPC_PORT") do
     config :gen_rpc, tcp_server_port: String.to_integer(gen_rpc_port)
   end

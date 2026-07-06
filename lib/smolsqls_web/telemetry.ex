@@ -8,12 +8,14 @@ defmodule SmolsqlsWeb.Telemetry do
 
   @impl true
   def init(_arg) do
-    children = [
-      # Telemetry poller will execute the given period measurements
-      # every 10_000ms. Learn more here: https://telemetry-metrics.hexdocs.pm
-      {:telemetry_poller, measurements: periodic_measurements(), period: 10_000},
-      {Peep, name: :smolsqls_peep, metrics: prometheus_metrics(), storage: :striped}
-    ]
+    children =
+      [
+        # Telemetry poller will execute the given period measurements
+        # every 10_000ms. Learn more here: https://telemetry-metrics.hexdocs.pm
+        {:telemetry_poller, measurements: periodic_measurements(), period: 10_000}
+      ] ++
+        backup_sla_pollers() ++
+        [{Peep, name: :smolsqls_peep, metrics: prometheus_metrics(), storage: :striped}]
 
     Supervisor.init(children, strategy: :one_for_one)
   end
@@ -53,6 +55,13 @@ defmodule SmolsqlsWeb.Telemetry do
       ),
       sum("smolsqls.cache_evictor.sweep.evicted"),
       sum("smolsqls.cache_evictor.sweep.freed_bytes"),
+      sum("smolsqls.backup_sweep.backed_up"),
+      last_value("smolsqls.backup_sla.in_breach",
+        description: "Active databases past the daily-backup window with no recent backup"
+      ),
+      last_value("smolsqls.backup_sla.oldest_age_seconds",
+        description: "Age in seconds of the worst backup gap across active databases"
+      ),
       counter("smolsqls.node_operation.count", tags: [:kind, :result]),
       counter("smolsqls.rate_limiter.rejected.count"),
       counter("smolsqls.fence.stopped.count"),
@@ -136,5 +145,18 @@ defmodule SmolsqlsWeb.Telemetry do
     [
       {Smolsqls.Telemetry, :emit_hot_servers, []}
     ]
+  end
+
+  defp backup_sla_pollers do
+    if Application.get_env(:smolsqls, __MODULE__, [])[:backup_sla_poller] == false do
+      []
+    else
+      [
+        {:telemetry_poller,
+         measurements: [{Smolsqls.Telemetry, :emit_backup_sla, []}],
+         period: 60_000,
+         name: :smolsqls_backup_sla_poller}
+      ]
+    end
   end
 end

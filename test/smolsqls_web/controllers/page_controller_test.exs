@@ -9,5 +9,7 @@ defmodule SmolsqlsWeb.PageControllerTest do
     assert response =~ "Platform limits"
     assert response =~ "Databases per account"
     assert response =~ "1 GiB"
+    assert response =~ "Backups"
+    assert response =~ "daily"
   end
 end

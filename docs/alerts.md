@@ -15,6 +15,7 @@ conditions are the contract.
 | Evacuation failed | `smolsqls_node_operation_count{kind="evacuate",result="error"}` increases | Node is down AND re-placement failed — traffic to its databases is erroring. |
 | Replication slot retention growing | `SqliteNode.status.replicationSlot.retainedBytes` growth over 30m, or `walStatus != "reserved"` | A node's read-model feed is stalled; unchecked, WAL retention takes down the metadb. |
 | Node count below expected | `count(smolsqls_hot_servers_count)` (scrape targets) < replicas for 10m | A pod isn't serving; if the operator hasn't evacuated it, placement still points at it. |
+| Daily backup SLA breached | `max(smolsqls_backup_sla_in_breach) > 0` for 30m | A database has no backup within the promised daily window — the sweeper isn't keeping up or is down, or object-store writes are failing. The gauge is polled per node independently of the sweeper, so `max()` across scrape targets is the fleet-wide truth. |
 
 ## Warn (business hours)
 

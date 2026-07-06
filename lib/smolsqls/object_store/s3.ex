@@ -47,6 +47,35 @@ defmodule Smolsqls.ObjectStore.S3 do
     end
   end
 
+  @impl true
+  def copy(source_key, dest_key) do
+    case Req.put(request(),
+           url: "s3://#{bucket()}/#{dest_key}",
+           headers: [{"x-amz-copy-source", "/#{bucket()}/#{source_key}"}]
+         ) do
+      {:ok, %{status: status}} when status in 200..299 -> object_size(dest_key)
+      {:ok, %{status: 404}} -> {:error, :not_found}
+      {:ok, %{status: status, body: body}} -> {:error, {:s3_status, status, body}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp object_size(key) do
+    case Req.head(request(), url: "s3://#{bucket()}/#{key}") do
+      {:ok, %{status: 200} = response} ->
+        case Req.Response.get_header(response, "content-length") do
+          [length | _] -> {:ok, String.to_integer(length)}
+          [] -> {:ok, 0}
+        end
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, {:s3_status, status, body}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   defp request do
     Req.new()
     |> ReqS3.attach(
