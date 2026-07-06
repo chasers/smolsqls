@@ -239,6 +239,22 @@ database server on it, and assert that syn resolves it from the primary
 node and that queries round-trip over gen_rpc (on a distinct TCP port),
 including deregistration when the peer dies.
 
+## Quality gate
+
+```sh
+mix precommit  # mutating: compile -Werror, format, credo --strict, test
+mix ci         # non-mutating superset CI runs (no DB needed)
+```
+
+`mix ci` is the merge gate: `hex.audit` (dependency CVEs) → compile
+(warnings-as-errors) → `deps.unlock --check-unused` → `format
+--check-formatted` → `credo --strict` (with the [ExSlop](https://github.com/elixir-vibe/ex_slop)
+plugin's AI-slop checks) → `deps.audit` → `sobelow` (security scan,
+`.sobelow-conf` holds accepted skips). CI runs it as a fast, Postgres-free
+`checks` job in parallel with the test jobs; the `operator/` subproject has
+its own `mix ci` and test job. See the CI workflow in
+`.github/workflows/ci.yml`.
+
 ## Repo layout
 
 ```

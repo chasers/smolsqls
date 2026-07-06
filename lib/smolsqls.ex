@@ -23,9 +23,8 @@ defmodule Smolsqls do
   def remove_database(%Database{} = database) do
     with {:ok, database} <- ControlPlane.mark_deleting(database),
          :ok <- Infra.deprovision(database),
-         :ok <- Smolsqls.Backups.delete_all(database),
-         {:ok, database} <- DataPlane.remove_database(database) do
-      {:ok, database}
+         :ok <- Smolsqls.Backups.delete_all(database) do
+      DataPlane.remove_database(database)
     end
   end
 

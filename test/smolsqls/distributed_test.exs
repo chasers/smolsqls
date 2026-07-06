@@ -14,7 +14,7 @@ defmodule Smolsqls.DistributedTest do
   @moduletag :distributed
   @moduletag :tmp_dir
 
-  @peer_gen_rpc_port 15370
+  @peer_gen_rpc_port 15_370
 
   alias Smolsqls.DataPlane.Registry
   alias Smolsqls.DataPlane.Router

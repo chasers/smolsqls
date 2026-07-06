@@ -68,7 +68,11 @@ defmodule Smolsqls.MixProject do
       {:gen_rpc, github: "emqx/gen_rpc", tag: "3.6.1"},
       {:exqlite, "~> 0.30"},
       {:req, "~> 0.6", override: true},
-      {:req_s3, "~> 0.2"}
+      {:req_s3, "~> 0.2"},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:ex_slop, "~> 0.4", only: [:dev, :test], runtime: false},
+      {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false},
+      {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -91,7 +95,22 @@ defmodule Smolsqls.MixProject do
         "esbuild smolsqls --minify",
         "phx.digest"
       ],
-      precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
+      precommit: [
+        "compile --warnings-as-errors",
+        "deps.unlock --unused",
+        "format",
+        "credo --strict",
+        "test"
+      ],
+      ci: [
+        "hex.audit",
+        "compile --warnings-as-errors",
+        "deps.unlock --check-unused",
+        "format --check-formatted",
+        "credo --strict",
+        "deps.audit",
+        "sobelow"
+      ]
     ]
   end
 end

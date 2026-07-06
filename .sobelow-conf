@@ -1,0 +1,9 @@
+[
+  verbose: false,
+  private: false,
+  skip: true,
+  router: "lib/smolsqls_web/router.ex",
+  exit: "medium",
+  ignore: ["Config.CSP"],
+  ignore_files: []
+]
