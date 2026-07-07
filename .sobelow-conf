@@ -4,6 +4,6 @@
   skip: true,
   router: "lib/smolsqls_web/router.ex",
   exit: "medium",
-  ignore: ["Config.CSP"],
+  ignore: [],
   ignore_files: []
 ]

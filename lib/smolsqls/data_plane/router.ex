@@ -35,6 +35,12 @@ defmodule Smolsqls.DataPlane.Router do
     route(database_id, {:sequence, sql, owner}, timeout)
   end
 
+  @spec snapshot_into(String.t(), Path.t(), timeout()) ::
+          {:ok, Server.query_result()} | {:error, term()}
+  def snapshot_into(database_id, path, timeout \\ @default_timeout) do
+    route(database_id, {:snapshot_into, path}, timeout)
+  end
+
   @spec autocommit?(String.t(), pid() | nil, timeout()) :: boolean()
   def autocommit?(database_id, owner, timeout \\ @default_timeout) do
     case Registry.owner_node(database_id) do
@@ -105,6 +111,10 @@ defmodule Smolsqls.DataPlane.Router do
 
   defp call_server(pid, {:sequence, sql, owner}, timeout) do
     Server.sequence(pid, sql, timeout, owner)
+  end
+
+  defp call_server(pid, {:snapshot_into, path}, timeout) do
+    Server.snapshot_into(pid, path, timeout)
   end
 
   defp call_server(pid, {:autocommit?, owner}, timeout) do

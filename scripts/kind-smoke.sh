@@ -6,6 +6,19 @@ set -euo pipefail
 
 BASE=${BASE:-http://localhost:8080}
 
+CLUSTER=smolsqls
+KCTX="kind-${CLUSTER}"
+
+# Pin every kubectl to the local kind context (both this cluster and GKE use the
+# "smolsqls" namespace — never let a stray current-context send these exec/apply
+# calls to the wrong cluster).
+kubectl() { command kubectl --context "$KCTX" "$@"; }
+
+if ! command kubectl config get-contexts -o name 2>/dev/null | grep -qx "$KCTX"; then
+  echo "ERROR: kube context '$KCTX' not found — run scripts/kind-up.sh first." >&2
+  exit 1
+fi
+
 echo "==> API index"
 curl -sf "$BASE/v1" >/dev/null
 

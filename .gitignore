@@ -31,6 +31,9 @@ smolsqls-*.tar
 # Ignore digested assets cache.
 /priv/static/cache_manifest.json
 
+# Dialyzer PLT cache (built by `mix ci` / the quality gate).
+/priv/plts/
+
 # In case you use Node.js/npm, you want to ignore these.
 npm-debug.log
 /assets/node_modules/
@@ -46,5 +49,5 @@ npm-debug.log
 /.claude/settings.local.json
 deploy/overlays/kind/tls/
 
-# Dialyzer PLTs
-/priv/plts/
+# Repo-local scoped kubeconfig (pins kubectl to kind-smolsqls; holds a client key).
+.kube/

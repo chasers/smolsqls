@@ -50,6 +50,8 @@ defmodule Smolsqls.DataPlane.Database.Server do
 
   @default_query_timeout :timer.seconds(30)
 
+  @denied_authorizer_actions [:attach, :detach]
+
   @type describe_result :: %{columns: [String.t()], param_count: non_neg_integer()}
 
   @spec query(pid() | String.t(), String.t(), [term()] | map(), timeout(), pid() | nil) ::
@@ -76,6 +78,18 @@ defmodule Smolsqls.DataPlane.Database.Server do
           :ok | {:error, term()}
   def sequence(server, sql, timeout \\ @default_query_timeout, owner \\ nil) do
     call(server, {:sequence, sql, owner}, timeout)
+  end
+
+  @doc """
+  Takes a consistent `VACUUM INTO` snapshot to `path`. This is a
+  privileged control-plane operation (backups, idle ships) and is not
+  subject to the tenant SQL authorizer that otherwise denies `ATTACH`
+  (and therefore `VACUUM`) on tenant-submitted statements.
+  """
+  @spec snapshot_into(pid() | String.t(), Path.t(), timeout()) ::
+          {:ok, query_result()} | {:error, term()}
+  def snapshot_into(server, path, timeout \\ @default_query_timeout) do
+    call(server, {:snapshot_into, path}, timeout)
   end
 
   @doc """
@@ -163,6 +177,7 @@ defmodule Smolsqls.DataPlane.Database.Server do
         :ok = Sqlite3.execute(conn, "PRAGMA journal_mode=WAL")
         :ok = Sqlite3.execute(conn, "PRAGMA foreign_keys=ON")
         :ok = Sqlite3.set_busy_timeout(conn, :timer.seconds(5))
+        :ok = Sqlite3.enable_load_extension(conn, false)
         :ok = apply_max_size(conn, limits.max_size_bytes)
 
         if limits.max_hot_ms do
@@ -201,7 +216,7 @@ defmodule Smolsqls.DataPlane.Database.Server do
     if lease_blocks?(state, owner) do
       {:reply, {:error, :database_busy_in_transaction}, state, state.idle_ttl}
     else
-      result = run_query_with_cap(state, sql, args)
+      result = with_authorizer(state.conn, fn -> run_query_with_cap(state, sql, args) end)
       state = sync_lease(state, owner)
       {:reply, result, state, state.idle_ttl}
     end
@@ -211,7 +226,8 @@ defmodule Smolsqls.DataPlane.Database.Server do
     if lease_blocks?(state, owner) do
       {:reply, {:error, :database_busy_in_transaction}, state, state.idle_ttl}
     else
-      {:reply, describe_statement(state.conn, sql), state, state.idle_ttl}
+      result = with_authorizer(state.conn, fn -> describe_statement(state.conn, sql) end)
+      {:reply, result, state, state.idle_ttl}
     end
   end
 
@@ -220,13 +236,23 @@ defmodule Smolsqls.DataPlane.Database.Server do
       {:reply, {:error, :database_busy_in_transaction}, state, state.idle_ttl}
     else
       result =
-        case Sqlite3.execute(state.conn, sql) do
-          :ok -> :ok
-          {:error, reason} -> {:error, format_error(reason)}
-        end
+        with_authorizer(state.conn, fn ->
+          case Sqlite3.execute(state.conn, sql) do
+            :ok -> :ok
+            {:error, reason} -> {:error, format_error(reason)}
+          end
+        end)
 
       state = sync_lease(state, owner)
       {:reply, result, state, state.idle_ttl}
+    end
+  end
+
+  def handle_call({:snapshot_into, path}, _from, state) do
+    if lease_blocks?(state, nil) do
+      {:reply, {:error, :database_busy_in_transaction}, state, state.idle_ttl}
+    else
+      {:reply, run_query(state.conn, "VACUUM INTO ?", [path]), state, state.idle_ttl}
     end
   end
 
@@ -376,6 +402,16 @@ defmodule Smolsqls.DataPlane.Database.Server do
     with {:ok, %{rows: [[page_size]]}} <- run_query(conn, "PRAGMA page_size", []) do
       max_page_count = max(div(max_size_bytes, page_size), 1)
       Sqlite3.execute(conn, "PRAGMA max_page_count = #{max_page_count}")
+    end
+  end
+
+  defp with_authorizer(conn, fun) do
+    :ok = Sqlite3.set_authorizer(conn, @denied_authorizer_actions)
+
+    try do
+      fun.()
+    after
+      Sqlite3.set_authorizer(conn, [])
     end
   end
 

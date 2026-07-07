@@ -7,6 +7,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CLUSTER=smolsqls
+KCTX="kind-${CLUSTER}"
+
+# Pin every kubectl below to the local kind context. Both this cluster and the
+# GKE staging cluster use the "smolsqls" namespace, so a stray ambient
+# current-context could otherwise apply these local-dev manifests to GKE.
+kubectl() { command kubectl --context "$KCTX" "$@"; }
 
 if ! kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
   kind create cluster --config deploy/overlays/kind/kind-config.yaml

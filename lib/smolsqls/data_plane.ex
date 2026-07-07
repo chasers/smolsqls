@@ -246,7 +246,7 @@ defmodule Smolsqls.DataPlane do
       )
 
     try do
-      with {:ok, _} <- Router.query(database.id, "VACUUM INTO ?", [snapshot_path]),
+      with {:ok, _} <- Router.snapshot_into(database.id, snapshot_path),
            {:ok, size_bytes} <- Smolsqls.ObjectStore.put_file(object_key, snapshot_path) do
         {:ok, %{object_key: object_key, size_bytes: size_bytes}}
       end
