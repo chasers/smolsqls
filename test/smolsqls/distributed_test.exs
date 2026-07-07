@@ -97,7 +97,7 @@ defmodule Smolsqls.DistributedTest do
     assert {:ok, _} = Router.query(database_id, "INSERT INTO t VALUES ('keep')")
 
     backup_path = Path.join(tmp_dir, "backup.db")
-    assert {:ok, _} = Router.query(database_id, "VACUUM INTO ?", [backup_path])
+    assert {:ok, _} = Router.snapshot_into(database_id, backup_path)
     assert {:ok, _} = Router.query(database_id, "DELETE FROM t")
 
     database = %Smolsqls.ControlPlane.Database{
