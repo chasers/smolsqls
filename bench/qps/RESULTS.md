@@ -50,6 +50,10 @@ Restore-path activation is ~3.3× slower than cache-hit even with a
 local-FS "S3". This is the number the cache evictor's high-water mark
 trades against.
 
+For **solo** cold-start latency (not a storm) against **real MinIO/S3**,
+swept across db sizes — plus the brand-new-db create→ready path — see
+[`bench/cold_start/RESULTS.md`](../cold_start/RESULTS.md).
+
 ## Idle-stop ship cost (the §1 lever)
 
 | metric | value |
@@ -88,5 +92,9 @@ same telemetry/noise caveat as the local table.
 - Hrana WebSocket connection ceiling per node — needs a proper
   load-generation harness; deferred until the protocol surface work.
 - Sustained mixed read/write soak (hours) — deferred to a real cluster.
-- Restore-path storms against real S3 (network) — deferred to a real
-  deployment; the local-FS numbers are lower bounds.
+- Restore-path *storms* against real S3 (network) — still deferred; the
+  local-FS numbers here are lower bounds. Solo cold-restore latency
+  against real MinIO/S3 is now measured in
+  [`bench/cold_start/RESULTS.md`](../cold_start/RESULTS.md), which also
+  found that a ~1 GB cold pull OOM-kills the owning pod (the S3 restore
+  buffers the whole object in memory).

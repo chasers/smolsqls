@@ -298,5 +298,11 @@ lib/smolsqls_web/controllers/  # REST API (see GET /v1 for the index)
 lib/smolsqls_web/hrana/        # Hrana (libSQL) WebSocket endpoint
 lib/smolsqls_web/live/         # LiveView dashboard
 operator/                     # Bonny-based Kubernetes operator (SqliteDatabase CRD)
+bench/                        # performance harnesses + RESULTS.md (qps, cold_start, litestream_density, schedulers)
 skills/                       # Claude Code skills (run skills/install.sh to link them in; see skills/README.md)
 ```
+
+Benchmarks live under `bench/<area>/` with a `RESULTS.md` per area. The
+query-path ones run locally via `mix run bench/<area>/*.exs`; the cluster
+ones (`bench/qps/kind_latency.sh`, `bench/cold_start/run.sh`) `kubectl exec`
+into a pod to measure against the real MinIO/S3 store and cross-pod topology.
