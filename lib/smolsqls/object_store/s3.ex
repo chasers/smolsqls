@@ -28,7 +28,11 @@ defmodule Smolsqls.ObjectStore.S3 do
     File.mkdir_p!(Path.dirname(dest_path))
     partial = dest_path <> ".partial"
 
-    case Req.get(request(), url: "s3://#{bucket()}/#{key}", raw: true, into: File.stream!(partial)) do
+    case Req.get(request(),
+           url: "s3://#{bucket()}/#{key}",
+           raw: true,
+           into: File.stream!(partial)
+         ) do
       {:ok, %{status: 200}} ->
         File.rename!(partial, dest_path)
         :ok
