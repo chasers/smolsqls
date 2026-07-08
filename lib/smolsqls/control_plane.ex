@@ -233,6 +233,26 @@ defmodule Smolsqls.ControlPlane do
   end
 
   @doc """
+  Ephemeral databases whose `expires_at` has passed — the expiry sweep's
+  work list, soonest-expired first. `:limit` bounds the batch.
+  """
+  @spec due_for_expiry(DateTime.t(), keyword()) :: [Database.t()]
+  def due_for_expiry(now, opts \\ []) do
+    query =
+      Database
+      |> where([d], not is_nil(d.expires_at) and d.expires_at <= ^now)
+      |> order_by([d], asc: d.expires_at)
+
+    query =
+      case Keyword.get(opts, :limit) do
+        nil -> query
+        limit -> limit(query, ^limit)
+      end
+
+    Repo.all(query)
+  end
+
+  @doc """
   Cursor-paginated database listing: keyset on `(inserted_at, id)`,
   `after` is the id of the last row of the previous page. Returns
   `%{entries: [...], next: id | nil}`.

@@ -25,6 +25,7 @@ defmodule Smolsqls.Application do
         enabled_child(Smolsqls.DataPlane.Fence) ++
         enabled_child(Smolsqls.Drain.Worker) ++
         enabled_child(Smolsqls.Backups.Sweeper) ++
+        enabled_child(Smolsqls.ExpirySweeper) ++
         [SmolsqlsWeb.Endpoint]
 
     # See https://elixir.hexdocs.pm/Supervisor.html
