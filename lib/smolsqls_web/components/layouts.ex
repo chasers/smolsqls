@@ -11,6 +11,14 @@ defmodule SmolsqlsWeb.Layouts do
   # and other static content.
   embed_templates "layouts/*"
 
+  @github_url "https://github.com/chasers/smolsqls"
+
+  @doc "URL of the project's GitHub repository."
+  def github_url, do: @github_url
+
+  @doc "The running application's version, e.g. \"0.1.0\"."
+  def app_version, do: :smolsqls |> Application.spec(:vsn) |> to_string()
+
   @doc """
   Renders your app layout.
 
@@ -37,11 +45,29 @@ defmodule SmolsqlsWeb.Layouts do
     ~H"""
     <header class="sticky top-0 z-40 border-b border-base-300 bg-base-100/90 backdrop-blur">
       <div class="mx-auto flex h-12 max-w-5xl items-center justify-between px-4 sm:px-6 lg:px-8">
-        <a href="/" class="flex items-center gap-2">
-          <.icon name="hero-bolt-solid" class="size-4 text-accent" />
-          <span class="text-sm font-semibold tracking-tight">smolsqls</span>
-        </a>
+        <div class="flex items-center gap-2">
+          <a href="/" class="flex items-center gap-2">
+            <.icon name="hero-bolt-solid" class="size-4 text-accent" />
+            <span class="text-sm font-semibold tracking-tight">smolsqls</span>
+          </a>
+          <a
+            href={github_url() <> "/releases"}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="rounded-full border border-base-300 px-1.5 py-0.5 font-mono text-[10px] text-base-content/50 transition-colors hover:text-base-content"
+          >
+            v{app_version()}
+          </a>
+        </div>
         <nav class="flex items-center gap-4">
+          <a
+            href={github_url()}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-sm text-base-content/60 transition-colors hover:text-base-content"
+          >
+            GitHub
+          </a>
           <a
             href="/v1"
             class="text-sm text-base-content/60 transition-colors hover:text-base-content"
