@@ -68,6 +68,24 @@ writer for a hot one. These appear in the backups list alongside
 recovery; continuous durability for premium databases is litestream's
 job.
 
+**Branching**: fork any database into a new, independent one —
+`POST /v1/databases/:id/branch` or the dashboard's Branch action. A
+branch is a *physical copy*, not copy-on-write (every database is its
+own SQLite file), seeded **without touching the parent's writer** —
+bytes come from the object store, never the live connection. The source
+is either a **snapshot** (the parent's latest idle snapshot or a backup,
+server-side copied to the child's key — available to any database) or,
+for litestream-enabled databases, an exact **point in time** within the
+recoverable window (litestream restore to a `timestamp`; 30 days, backed
+by `LITESTREAM_RETENTION`). The child records its lineage
+(`source_database_id`, `branch_point_at`), gets its own default token,
+counts against the tenant's database limit (a branch *is* a database),
+and starts un-replicated by default. Branches can be **ephemeral**: set
+`expires_at` and a cluster-singleton sweeper (`Smolsqls.ExpirySweeper`)
+reaps them once past. A database with branches can't be deleted until
+its branches are gone (no cascade); the dashboard nests branches under
+their parent with a count.
+
 **Client access** — no custom client needed:
 
 - **libSQL / Hrana**: any stock libSQL client (`@libsql/client`, etc.)
