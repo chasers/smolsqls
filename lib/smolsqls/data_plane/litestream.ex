@@ -48,16 +48,33 @@ defmodule Smolsqls.DataPlane.Litestream do
   end
 
   @doc """
-  Restores a database's replica to `dest_path` — the failover path for
-  databases whose file is not on this node's volume.
+  Restores a database's replica to `dest_path`.
+
+  The source (`database`) and the destination (`dest_path`) are decoupled,
+  so this serves both the failover path (restore a database onto its own
+  file on a fresh volume) and seeding a *different* file from a parent's
+  replica — the substrate for branching.
+
+  Options:
+
+    * `:timestamp` — a `DateTime` or RFC3339 string; restores the replica to
+      that point in time (litestream `-timestamp`) instead of the latest.
   """
-  @spec restore(Database.t(), Path.t()) :: :ok | {:error, term()}
-  def restore(%Database{} = database, dest_path) do
+  @spec restore(Database.t(), Path.t(), keyword()) :: :ok | {:error, term()}
+  def restore(%Database{} = database, dest_path, opts \\ []) do
     if enabled?() do
       File.mkdir_p!(Path.dirname(dest_path))
-      run(["restore", "-o", dest_path, replica_url(database)])
+      run(["restore", "-o", dest_path] ++ timestamp_args(opts) ++ [replica_url(database)])
     else
       {:error, :litestream_disabled}
+    end
+  end
+
+  defp timestamp_args(opts) do
+    case Keyword.get(opts, :timestamp) do
+      nil -> []
+      %DateTime{} = at -> ["-timestamp", DateTime.to_iso8601(at)]
+      at when is_binary(at) -> ["-timestamp", at]
     end
   end
 

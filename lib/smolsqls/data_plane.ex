@@ -295,9 +295,7 @@ defmodule Smolsqls.DataPlane do
     if File.exists?(backup_path) and is_binary(database.file_path) do
       :ok = Supervisor.stop_database(database.id)
       Litestream.stop(database.file_path)
-      File.rm(database.file_path <> "-wal")
-      File.rm(database.file_path <> "-shm")
-      File.cp!(backup_path, database.file_path)
+      install_local_file(database.file_path, backup_path)
 
       case Supervisor.start_database(database.id, database.file_path, database: database) do
         {:ok, _pid} -> :ok
@@ -306,6 +304,23 @@ defmodule Smolsqls.DataPlane do
     else
       {:error, :backup_not_found}
     end
+  end
+
+  @doc """
+  Installs a materialized SQLite file at `file_path`: drops any stale
+  WAL/SHM companions and copies `source_path` into place. The shared
+  byte-install step for both restoring a database onto its own file and
+  seeding a fresh (branched/cloned) file from a source. Does not touch
+  any running server — callers stop/start around it as their mode
+  requires.
+  """
+  @spec install_local_file(Path.t(), Path.t()) :: :ok
+  def install_local_file(file_path, source_path) do
+    File.mkdir_p!(Path.dirname(file_path))
+    File.rm(file_path <> "-wal")
+    File.rm(file_path <> "-shm")
+    File.cp!(source_path, file_path)
+    :ok
   end
 
   @doc """

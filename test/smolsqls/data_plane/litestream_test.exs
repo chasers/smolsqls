@@ -64,6 +64,37 @@ defmodule Smolsqls.DataPlane.LitestreamTest do
     )
   end
 
+  test "restore passes the point-in-time flag when given an instant", %{tmp_dir: tmp_dir} do
+    args_file = Path.join(tmp_dir, "args")
+    stub = Path.join(tmp_dir, "litestream-stub")
+
+    File.write!(stub, """
+    #!/bin/sh
+    printf '%s\\n' "$@" > #{args_file}
+    exit 0
+    """)
+
+    File.chmod!(stub, 0o755)
+
+    read_args = fn -> File.read!(args_file) |> String.split("\n", trim: true) end
+
+    with_config(
+      [enabled: true, replica_url_prefix: "s3://bucket/ls", binary: stub],
+      fn ->
+        dest = Path.join(tmp_dir, "restored/db.db")
+        at = ~U[2026-07-01 12:00:00Z]
+
+        assert :ok = Litestream.restore(database(), dest, timestamp: at)
+        args = read_args.()
+        assert "-timestamp" in args
+        assert "2026-07-01T12:00:00Z" in args
+
+        assert :ok = Litestream.restore(database(), dest)
+        refute "-timestamp" in read_args.()
+      end
+    )
+  end
+
   defp with_config(config, fun) do
     previous = Application.get_env(:smolsqls, Litestream)
     Application.put_env(:smolsqls, Litestream, config)
