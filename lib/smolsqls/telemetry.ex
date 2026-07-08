@@ -8,7 +8,11 @@ defmodule Smolsqls.Telemetry do
   Events:
 
     * `[:smolsqls, :query]` — `%{count, duration_ms}`, tags `result`
-      (`ok` | `error` | `badrpc`), `remote` (`true` | `false`)
+      (`ok` | `error` | `badrpc`), `remote` (`true` | `false`),
+      `cold` (`true` | `false`) — `true` when the query had to activate
+      the server (cold start, including any restore from the object
+      store); the `[:smolsqls, :activation]` event carries the
+      restore-path breakdown for those
     * `[:smolsqls, :activation]` — `%{count, duration_ms}`, tag `path`
       (`cache_hit` | `litestream` | `idle_snapshot` | `backup` |
       `missing`)
@@ -28,12 +32,12 @@ defmodule Smolsqls.Telemetry do
     * `[:smolsqls, :hot_servers]` — `%{count}` (polled)
   """
 
-  @spec query(integer(), atom() | String.t(), boolean()) :: :ok
-  def query(duration_ms, result, remote) do
+  @spec query(integer(), atom() | String.t(), boolean(), boolean()) :: :ok
+  def query(duration_ms, result, remote, cold) do
     :telemetry.execute(
       [:smolsqls, :query],
       %{count: 1, duration_ms: duration_ms},
-      %{result: to_string(result), remote: to_string(remote)}
+      %{result: to_string(result), remote: to_string(remote), cold: to_string(cold)}
     )
   end
 

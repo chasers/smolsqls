@@ -40,7 +40,12 @@ node volumes are caches. When a database server idle-stops, it ships a
 `idle-snapshots/<tenant>/<db>/latest.db` and bumps a
 `snapshot_generation` in the metadb. (Every session ships — skipping
 the upload for read-only sessions is deferred until statements can be
-classified by a real SQL parser rather than heuristics.) Activation
+classified by a real SQL parser rather than heuristics.) Objects are
+stored gzip-compressed, transparently and streaming in both directions
+(the S3 adapter compresses on ship and decompresses on restore, so
+callers only see logical files and memory stays bounded regardless of
+database size); reads fall back to raw for objects written before
+compression. Activation
 trusts placement + generation, never bare file
 presence: a cached file whose `<file>.generation` sidecar is behind
 the metadb is discarded and re-fetched, and a missing file restores
@@ -298,5 +303,11 @@ lib/smolsqls_web/controllers/  # REST API (see GET /v1 for the index)
 lib/smolsqls_web/hrana/        # Hrana (libSQL) WebSocket endpoint
 lib/smolsqls_web/live/         # LiveView dashboard
 operator/                     # Bonny-based Kubernetes operator (SqliteDatabase CRD)
+bench/                        # performance harnesses + RESULTS.md (qps, cold_start, litestream_density, schedulers)
 skills/                       # Claude Code skills (run skills/install.sh to link them in; see skills/README.md)
 ```
+
+Benchmarks live under `bench/<area>/` with a `RESULTS.md` per area. The
+query-path ones run locally via `mix run bench/<area>/*.exs`; the cluster
+ones (`bench/qps/kind_latency.sh`, `bench/cold_start/run.sh`) `kubectl exec`
+into a pod to measure against the real MinIO/S3 store and cross-pod topology.

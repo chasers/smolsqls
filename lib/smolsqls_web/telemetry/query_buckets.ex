@@ -4,5 +4,5 @@ defmodule SmolsqlsWeb.Telemetry.QueryBuckets do
   """
 
   use Peep.Buckets.Custom,
-    buckets: [1, 5, 10, 25, 50, 100, 250, 500, 1_000, 5_000, 30_000]
+    buckets: [1, 5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000, 30_000]
 end

@@ -12,5 +12,6 @@ defmodule SmolsqlsWeb.MetricsControllerTest do
 
     assert body =~ "smolsqls_query_count"
     assert body =~ ~s(result="ok")
+    assert body =~ ~s(cold="false")
   end
 end

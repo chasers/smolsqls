@@ -48,6 +48,30 @@ defmodule Smolsqls.DataPlaneTest do
     assert is_pid(DataPlane.Registry.whereis(database.id))
   end
 
+  test "query/3 telemetry tags cold vs warm" do
+    tenant = tenant_fixture()
+    database = placed_database_fixture(tenant)
+
+    parent = self()
+    handler = "cold-warm-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      handler,
+      [:smolsqls, :query],
+      fn _event, _measurements, metadata, _ -> send(parent, {:query_meta, metadata}) end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler) end)
+
+    assert {:ok, _} = DataPlane.query(database.id, "SELECT 1")
+    assert_receive {:query_meta, %{cold: "false"}}
+
+    :ok = DataPlane.Supervisor.stop_database(database.id)
+    assert {:ok, _} = DataPlane.query(database.id, "SELECT 1")
+    assert_receive {:query_meta, %{cold: "true"}}
+  end
+
   test "query/3 does not activate a deleting database" do
     tenant = tenant_fixture()
     database = placed_database_fixture(tenant)

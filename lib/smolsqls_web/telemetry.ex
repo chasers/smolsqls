@@ -38,9 +38,9 @@ defmodule SmolsqlsWeb.Telemetry do
       last_value("smolsqls.hot_servers.count",
         description: "Database servers currently hot on this node"
       ),
-      counter("smolsqls.query.count", tags: [:result, :remote]),
+      counter("smolsqls.query.count", tags: [:result, :remote, :cold]),
       distribution("smolsqls.query.duration_ms",
-        tags: [:result],
+        tags: [:result, :cold],
         reporter_options: query_buckets
       ),
       counter("smolsqls.activation.count", tags: [:path]),

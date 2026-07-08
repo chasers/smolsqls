@@ -58,16 +58,17 @@ defmodule Smolsqls.DataPlane.Router do
   defp route(database_id, op, timeout) do
     started = System.monotonic_time(:millisecond)
 
-    {node, result} =
+    {cold, {node, result}} =
       case Registry.owner_node(database_id) do
-        {:ok, node} -> {node, dispatch(node, database_id, op, timeout)}
-        {:error, :not_found} -> activate_and_dispatch(database_id, op, timeout)
+        {:ok, node} -> {false, {node, dispatch(node, database_id, op, timeout)}}
+        {:error, :not_found} -> {true, activate_and_dispatch(database_id, op, timeout)}
       end
 
     Smolsqls.Telemetry.query(
       System.monotonic_time(:millisecond) - started,
       classify(result),
-      node != nil and node != Node.self()
+      node != nil and node != Node.self(),
+      cold
     )
 
     result

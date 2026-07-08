@@ -24,7 +24,8 @@ conditions are the contract.
 | gen_rpc failures | `rate(smolsqls_query_count{result="badrpc"}[5m]) > 1` | Inter-node transport is flaking; queries to remote databases are failing. |
 | Fencing fired | `increase(smolsqls_fence_stopped_count[1h]) > 0` | A returning node held servers for re-placed databases — expected after an evacuation, suspicious otherwise. |
 | Query error rate | `rate(smolsqls_query_count{result="error"}[5m]) / rate(smolsqls_query_count[5m]) > 0.05` | Mostly client SQL errors, but a step change tracks releases/incidents. |
-| Query latency p99 | `histogram_quantile(0.99, smolsqls_query_duration_ms_bucket)` > 1s for 15m | Writer contention or slow restores on the activation path. |
+| Warm query latency p99 | `histogram_quantile(0.99, smolsqls_query_duration_ms_bucket{cold="false"})` > 1s for 15m | Writer contention on hot servers — isolated from cold-start restore cost by the `cold` tag. |
+| Cold query latency p99 | `histogram_quantile(0.99, smolsqls_query_duration_ms_bucket{cold="true"})` > 30s for 15m | First-query cold starts are slow — the caller-visible activation cost (restore + open). Cross-check `smolsqls_activation_duration_ms` for the restore-path split. |
 | Restore latency | `histogram_quantile(0.99, smolsqls_activation_duration_ms_bucket{path!="cache_hit"})` > 30s | Cold-start SLO erosion — S3 slow or snapshots too large. |
 | Evictor churn | `rate(smolsqls_cache_evictor_sweep_freed_bytes[1h])` persistently high | Disk high-water mark too low for the working set; activations pay repeated re-fetches. |
 | Rate-limit rejections | `rate(smolsqls_rate_limiter_rejected_count[5m])` sustained per database | A tenant is hitting their ceiling — support signal, not incident. |
