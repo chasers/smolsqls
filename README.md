@@ -192,6 +192,13 @@ curl -X POST http://localhost:4000/v1/databases/$DB_ID/restore \
   -H "authorization: Bearer $API_KEY" \
   -H 'content-type: application/json' \
   -d "{\"backup_id\": \"$BACKUP_ID\"}"
+
+# branch it into a new, independent database seeded from its latest snapshot
+# (returns the new database + its auth_token, like create)
+curl -X POST http://localhost:4000/v1/databases/$DB_ID/branch \
+  -H "authorization: Bearer $API_KEY" \
+  -H 'content-type: application/json' \
+  -d '{"name": "task-db-branch"}'
 ```
 
 Or with a stock libSQL client:

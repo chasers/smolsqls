@@ -242,6 +242,49 @@ defmodule SmolsqlsWeb.Api.ApiFlowTest do
     end
   end
 
+  describe "branch over the API" do
+    test "branches a database from its latest snapshot", %{conn: conn} do
+      tenant = tenant_fixture()
+      database = placed_database_fixture(tenant)
+      {:ok, _} = DataPlane.query(database.id, "CREATE TABLE t (v TEXT)")
+      {:ok, _} = DataPlane.query(database.id, "INSERT INTO t VALUES ('parent')")
+      :ok = DataPlane.idle_stop_database(database)
+
+      body =
+        conn
+        |> authed(tenant.api_key)
+        |> post(~p"/v1/databases/#{database.id}/branch", %{"name" => "branch-db"})
+        |> json_response(201)
+        |> cleanup_database()
+
+      data = body["data"]
+      assert data["status"] == "active"
+      assert data["source_database_id"] == database.id
+      assert data["branch_point_at"]
+
+      result =
+        conn
+        |> authed(data["auth_token"])
+        |> post(~p"/v1/databases/#{data["id"]}/query", %{"sql" => "SELECT v FROM t"})
+        |> json_response(200)
+
+      assert result["data"]["rows"] == [["parent"]]
+    end
+
+    test "returns 409 when the source has no snapshot to branch from", %{conn: conn} do
+      tenant = tenant_fixture()
+      database = placed_database_fixture(tenant)
+
+      body =
+        conn
+        |> authed(tenant.api_key)
+        |> post(~p"/v1/databases/#{database.id}/branch", %{"name" => "branch-db"})
+        |> json_response(409)
+
+      assert body["error"]["code"] == "no_snapshot"
+    end
+  end
+
   describe "token management over the API" do
     test "database tokens: create, list, disable, delete", %{conn: conn} do
       tenant = tenant_fixture()

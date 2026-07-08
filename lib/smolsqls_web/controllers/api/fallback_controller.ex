@@ -76,6 +76,17 @@ defmodule SmolsqlsWeb.Api.FallbackController do
     })
   end
 
+  def call(conn, {:error, :no_snapshot}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{
+      error: %{
+        code: "no_snapshot",
+        message: "source database has no snapshot to branch from; create a backup first"
+      }
+    })
+  end
+
   def call(conn, {:error, :has_branches}) do
     conn
     |> put_status(:conflict)

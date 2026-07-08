@@ -43,6 +43,17 @@ defmodule SmolsqlsWeb.Api.DatabaseController do
     end
   end
 
+  def branch(conn, %{"database_id" => id} = params) do
+    attrs = Map.take(params, ["name", "expires_at"])
+
+    with {:ok, source} <- fetch_database(conn, id),
+         {:ok, database} <- Smolsqls.branch_database(source, attrs) do
+      conn
+      |> put_status(:created)
+      |> render(:show, database: database, include_token: true)
+    end
+  end
+
   defp fetch_database(conn, id) do
     case ControlPlane.get_database(conn.assigns.current_tenant, id) do
       nil -> {:error, :not_found}

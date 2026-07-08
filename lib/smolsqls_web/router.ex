@@ -87,5 +87,7 @@ defmodule SmolsqlsWeb.Router do
     get "/databases/:database_id/backups", BackupController, :index
     post "/databases/:database_id/backups", BackupController, :create
     post "/databases/:database_id/restore", BackupController, :restore
+
+    post "/databases/:database_id/branch", DatabaseController, :branch
   end
 end
