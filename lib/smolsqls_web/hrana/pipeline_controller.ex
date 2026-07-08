@@ -46,7 +46,9 @@ defmodule SmolsqlsWeb.Hrana.PipelineController do
       {:error, :baton_unsupported} ->
         conn
         |> put_status(:bad_request)
-        |> json(%{error: %{message: "batons are not supported; transactions cannot span requests"}})
+        |> json(%{
+          error: %{message: "batons are not supported; transactions cannot span requests"}
+        })
 
       _ ->
         conn
