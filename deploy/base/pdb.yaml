@@ -1,0 +1,10 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: smolsqls
+  namespace: smolsqls
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: smolsqls
