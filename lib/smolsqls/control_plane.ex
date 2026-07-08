@@ -212,6 +212,27 @@ defmodule Smolsqls.ControlPlane do
   end
 
   @doc """
+  Whether any database was branched from this one (has it as its
+  `source_database_id`). Deleting a database with branches is blocked.
+  """
+  @spec has_branches?(Database.t()) :: boolean()
+  def has_branches?(%Database{id: id}) do
+    Database
+    |> where([d], d.source_database_id == ^id)
+    |> Repo.exists?()
+  end
+
+  @doc """
+  Count of databases branched directly from this one.
+  """
+  @spec branch_count(Database.t()) :: non_neg_integer()
+  def branch_count(%Database{id: id}) do
+    Database
+    |> where([d], d.source_database_id == ^id)
+    |> Repo.aggregate(:count)
+  end
+
+  @doc """
   Cursor-paginated database listing: keyset on `(inserted_at, id)`,
   `after` is the id of the last row of the previous page. Returns
   `%{entries: [...], next: id | nil}`.

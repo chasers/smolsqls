@@ -57,7 +57,12 @@ defmodule SmolsqlsWeb.DatabaseLive.Index do
        |> put_flash(:info, "Database deleted")
        |> load_databases()}
     else
-      _ -> {:noreply, put_flash(socket, :error, "Delete failed")}
+      {:error, :has_branches} ->
+        {:noreply,
+         put_flash(socket, :error, "Delete its branches first — this database has branches")}
+
+      _ ->
+        {:noreply, put_flash(socket, :error, "Delete failed")}
     end
   end
 

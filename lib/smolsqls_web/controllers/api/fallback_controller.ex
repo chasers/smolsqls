@@ -76,6 +76,17 @@ defmodule SmolsqlsWeb.Api.FallbackController do
     })
   end
 
+  def call(conn, {:error, :has_branches}) do
+    conn
+    |> put_status(:conflict)
+    |> json(%{
+      error: %{
+        code: "has_branches",
+        message: "database has branches; delete them before deleting this database"
+      }
+    })
+  end
+
   def call(conn, {:error, :database_busy_in_transaction}) do
     conn
     |> put_status(:conflict)

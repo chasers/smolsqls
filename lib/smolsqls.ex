@@ -62,28 +62,56 @@ defmodule Smolsqls do
     end
   end
 
+  @doc """
+  Removes a database. Blocked with `{:error, :has_branches}` when other
+  databases were branched from it — the branches must be deleted first (no
+  cascade). A self-FK on `source_database_id` backstops this at the database
+  level.
+  """
   @spec remove_database(Database.t()) :: {:ok, Database.t()} | {:error, term()}
   def remove_database(%Database{} = database) do
-    with {:ok, database} <- ControlPlane.mark_deleting(database),
-         :ok <- Infra.deprovision(database),
-         :ok <- Smolsqls.Backups.delete_all(database) do
-      DataPlane.remove_database(database)
+    if ControlPlane.has_branches?(database) do
+      {:error, :has_branches}
+    else
+      with {:ok, database} <- ControlPlane.mark_deleting(database),
+           :ok <- Infra.deprovision(database),
+           :ok <- Smolsqls.Backups.delete_all(database) do
+        DataPlane.remove_database(database)
+      end
     end
   end
 
   @spec delete_tenant(Tenant.t()) :: {:ok, Tenant.t()} | {:error, term()}
   def delete_tenant(%Tenant{} = tenant) do
-    tenant
-    |> ControlPlane.list_databases()
-    |> Enum.reduce_while(:ok, fn database, :ok ->
-      case remove_database(database) do
-        {:ok, _} -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, {database.id, reason}}}
-      end
-    end)
-    |> case do
+    case remove_tenant_databases(tenant) do
       :ok -> ControlPlane.delete_tenant(tenant)
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp remove_tenant_databases(%Tenant{} = tenant) do
+    case ControlPlane.list_databases(tenant) do
+      [] ->
+        :ok
+
+      databases ->
+        case Enum.reject(databases, &ControlPlane.has_branches?/1) do
+          [] ->
+            {:error, :branch_cycle}
+
+          leaves ->
+            leaves
+            |> Enum.reduce_while(:ok, fn database, :ok ->
+              case remove_database(database) do
+                {:ok, _} -> {:cont, :ok}
+                {:error, reason} -> {:halt, {:error, {database.id, reason}}}
+              end
+            end)
+            |> case do
+              :ok -> remove_tenant_databases(tenant)
+              {:error, reason} -> {:error, reason}
+            end
+        end
     end
   end
 end
