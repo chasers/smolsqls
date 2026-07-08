@@ -91,27 +91,30 @@ defmodule Smolsqls do
 
   defp remove_tenant_databases(%Tenant{} = tenant) do
     case ControlPlane.list_databases(tenant) do
+      [] -> :ok
+      databases -> remove_leaves(tenant, databases)
+    end
+  end
+
+  defp remove_leaves(%Tenant{} = tenant, databases) do
+    case Enum.reject(databases, &ControlPlane.has_branches?/1) do
       [] ->
-        :ok
+        {:error, :branch_cycle}
 
-      databases ->
-        case Enum.reject(databases, &ControlPlane.has_branches?/1) do
-          [] ->
-            {:error, :branch_cycle}
-
-          leaves ->
-            leaves
-            |> Enum.reduce_while(:ok, fn database, :ok ->
-              case remove_database(database) do
-                {:ok, _} -> {:cont, :ok}
-                {:error, reason} -> {:halt, {:error, {database.id, reason}}}
-              end
-            end)
-            |> case do
-              :ok -> remove_tenant_databases(tenant)
-              {:error, reason} -> {:error, reason}
-            end
+      leaves ->
+        case remove_each(leaves) do
+          :ok -> remove_tenant_databases(tenant)
+          {:error, reason} -> {:error, reason}
         end
     end
+  end
+
+  defp remove_each(databases) do
+    Enum.reduce_while(databases, :ok, fn database, :ok ->
+      case remove_database(database) do
+        {:ok, _} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {database.id, reason}}}
+      end
+    end)
   end
 end
