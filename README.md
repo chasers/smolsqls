@@ -261,7 +261,10 @@ delete — new signups land here to copy their first key.
 `deploy/` holds kustomize manifests: a 3-replica StatefulSet where pod
 `smolsqls-N` ↔ PVC `data-smolsqls-N` ↔ Erlang node name (the volume-claim
 identity model), each pod running a Litestream sidecar that databases
-are registered with dynamically over a control socket. The
+are registered with dynamically over a control socket. A
+PodDisruptionBudget (`maxUnavailable: 1`) keeps voluntary disruptions
+(node drains/upgrades) from taking down more than one pod at a time,
+preserving quorum. The
 [operator](operator/) tracks one `SqliteNode` CR per data-plane node —
 never per database — reporting replication-slot health and database
 counts onto `kubectl get sqlitenodes`. Setting `spec.drain: true`
