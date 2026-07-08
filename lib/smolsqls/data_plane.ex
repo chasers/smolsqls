@@ -46,6 +46,54 @@ defmodule Smolsqls.DataPlane do
     end
   end
 
+  @doc """
+  Server-side copies a source artifact into a freshly created branch's
+  idle-snapshot key, from which `place_branch/1` restores it. The object
+  store is shared, so this runs on whatever node orchestrates the branch
+  and never touches the parent's writer.
+  """
+  @spec seed_branch_from_object(Database.t(), String.t()) :: :ok | {:error, term()}
+  def seed_branch_from_object(%Database{} = branch, source_object_key) do
+    case Smolsqls.ObjectStore.copy(source_object_key, IdleSnapshots.object_key(branch)) do
+      {:ok, _size} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @doc """
+  Places a branch whose bytes already sit at its idle-snapshot key: picks a
+  node, restores the seeded artifact into the child's file (the activation
+  restore path), starts its server, and marks it placed. Like
+  `place_database/1` but the child is restored from its seed rather than
+  started on an empty file.
+  """
+  @spec place_branch(Database.t()) :: {:ok, Database.t()} | {:error, term()}
+  def place_branch(%Database{} = database) do
+    node = Placement.pick_node()
+
+    if node == Node.self() do
+      place_branch_locally(database)
+    else
+      case :gen_rpc.call(node, __MODULE__, :place_branch_locally, [database], @gen_rpc_timeout) do
+        {:badrpc, reason} -> {:error, {:badrpc, reason}}
+        {:badtcp, reason} -> {:error, {:badtcp, reason}}
+        result -> result
+      end
+    end
+  end
+
+  @spec place_branch_locally(Database.t()) :: {:ok, Database.t()} | {:error, term()}
+  def place_branch_locally(%Database{} = database) do
+    file_path = file_path_for(database)
+    server_database = %{database | file_path: file_path}
+
+    with :ok <- ensure_local_file(server_database),
+         {:ok, _pid} <-
+           Supervisor.start_database(database.id, file_path, database: server_database) do
+      ControlPlane.mark_placed(database, Node.self(), file_path)
+    end
+  end
+
   @spec remove_database(Database.t()) :: {:ok, Database.t()} | {:error, term()}
   def remove_database(%Database{} = database) do
     on_owner_node(database, :remove_database_locally, [database])

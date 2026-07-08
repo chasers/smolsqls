@@ -415,6 +415,64 @@ defmodule Smolsqls.ControlPlane do
     |> Repo.aggregate(:count)
   end
 
+  @doc """
+  Creates a child database row (a branch of `source`) with its own default
+  token, in the source's tenant. Lineage (`source_database_id`,
+  `branch_point_at`) is stamped from `attrs`, defaulting the source and the
+  current time. The child starts at snapshot generation 1, matching the
+  seeded artifact the data plane places at its idle-snapshot key. Counts
+  against the tenant database limit like any other database (a branch is a
+  database).
+  """
+  @spec branch_database(Database.t(), map()) :: {:ok, Database.t()} | {:error, term()}
+  def branch_database(%Database{} = source, attrs) do
+    tenant = get_tenant(source.tenant_id)
+    max_databases = tenant && Smolsqls.Limits.max_databases(tenant)
+
+    if is_integer(max_databases) and database_count(tenant) >= max_databases do
+      {:error, :database_limit_reached}
+    else
+      insert_branch_with_default_token(source, attrs)
+    end
+  end
+
+  defp insert_branch_with_default_token(%Database{} = source, attrs) do
+    attrs =
+      attrs
+      |> Map.put("tenant_id", source.tenant_id)
+      |> Map.put_new("source_database_id", source.id)
+      |> Map.put_new("branch_point_at", DateTime.utc_now())
+
+    Repo.transaction(fn ->
+      with {:ok, database} <-
+             Repo.insert(
+               %Database{}
+               |> Database.branch_changeset(attrs)
+               |> Ecto.Changeset.put_change(:snapshot_generation, 1)
+             ),
+           {:ok, token} <-
+             Repo.insert(
+               DatabaseToken.create_changeset(
+                 %DatabaseToken{database_id: database.id},
+                 %{"name" => "default"}
+               )
+             ) do
+        {database, token}
+      else
+        {:error, changeset} -> Repo.rollback(changeset)
+      end
+    end)
+    |> case do
+      {:ok, {database, token}} ->
+        write_through({:ok, database}, &ReadModel.put_database/1)
+        write_through({:ok, token}, &ReadModel.put_database_token/1)
+        {:ok, %{database | auth_token: token.token}}
+
+      {:error, changeset} ->
+        {:error, changeset}
+    end
+  end
+
   def update_database_settings(%Database{} = database, attrs) do
     database
     |> Database.settings_changeset(attrs)
