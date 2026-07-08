@@ -65,6 +65,35 @@ defmodule Smolsqls.ReadModel.SnapshotTest do
     assert loaded.snapshot_generation == 1
   end
 
+  test "branch lineage and expiry ride the COPY snapshot" do
+    tenant = tenant_fixture()
+    parent = database_fixture(tenant)
+    branch_point = ~U[2026-07-01 00:00:00.000000Z]
+    expires = ~U[2026-08-01 00:00:00.000000Z]
+
+    {:ok, branch} =
+      %Smolsqls.ControlPlane.Database{}
+      |> Smolsqls.ControlPlane.Database.branch_changeset(%{
+        "name" => "branch-#{System.unique_integer([:positive])}",
+        "tenant_id" => tenant.id,
+        "source_database_id" => parent.id,
+        "branch_point_at" => branch_point,
+        "expires_at" => expires
+      })
+      |> Smolsqls.Repo.insert()
+
+    assert :ok = Snapshot.load()
+
+    loaded = ReadModel.get_database(branch.id)
+    assert loaded.source_database_id == parent.id
+    assert DateTime.compare(loaded.branch_point_at, branch_point) == :eq
+    assert DateTime.compare(loaded.expires_at, expires) == :eq
+
+    parent_loaded = ReadModel.get_database(parent.id)
+    assert parent_loaded.source_database_id == nil
+    assert parent_loaded.expires_at == nil
+  end
+
   test "authenticate paths serve from the read model once ready" do
     tenant = tenant_fixture()
     database = placed_database_fixture(tenant)

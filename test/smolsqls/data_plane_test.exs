@@ -21,6 +21,24 @@ defmodule Smolsqls.DataPlaneTest do
     assert persisted.node == database.node
   end
 
+  @tag :tmp_dir
+  test "install_local_file/2 installs bytes and clears wal/shm companions", %{tmp_dir: tmp_dir} do
+    file = Path.join(tmp_dir, "nested/db.db")
+    File.mkdir_p!(Path.dirname(file))
+    File.write!(file, "old")
+    File.write!(file <> "-wal", "stale-wal")
+    File.write!(file <> "-shm", "stale-shm")
+
+    source = Path.join(tmp_dir, "source.db")
+    File.write!(source, "new-bytes")
+
+    assert :ok = DataPlane.install_local_file(file, source)
+
+    assert File.read!(file) == "new-bytes"
+    refute File.exists?(file <> "-wal")
+    refute File.exists?(file <> "-shm")
+  end
+
   test "query/3 routes to the placed database" do
     tenant = tenant_fixture()
     database = placed_database_fixture(tenant)
