@@ -12,7 +12,13 @@ defmodule Smolsqls.ObjectStore.S3 do
   size. Reads detect the gzip magic bytes, so objects written before
   compression was introduced still restore. The uncompressed byte count
   travels as `x-amz-meta-logical-length` so `put_file/2` and the
-  server-side `copy/2` (backup promotion) report the same logical size.
+  server-side `copy/2` (backup promotion, branch seeding) report the same
+  logical size.
+
+  The server-side `copy/2` sends an explicit empty body so the request
+  carries `Content-Length: 0`: AWS S3 tolerates a bodyless copy PUT, but
+  Google Cloud Storage's S3-compatible API rejects it with HTTP 411
+  (Length Required).
   """
 
   @behaviour Smolsqls.ObjectStore
@@ -88,7 +94,8 @@ defmodule Smolsqls.ObjectStore.S3 do
   def copy(source_key, dest_key) do
     case Req.put(request(),
            url: "s3://#{bucket()}/#{dest_key}",
-           headers: [{"x-amz-copy-source", "/#{bucket()}/#{source_key}"}]
+           headers: [{"x-amz-copy-source", "/#{bucket()}/#{source_key}"}],
+           body: ""
          ) do
       {:ok, %{status: status}} when status in 200..299 -> object_size(dest_key)
       {:ok, %{status: 404}} -> {:error, :not_found}
