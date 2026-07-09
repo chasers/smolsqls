@@ -107,6 +107,7 @@ defmodule SmolsqlsWeb.Api.ErrorCode do
   def classify({:badtcp, _}), do: node_unavailable()
   def classify(:no_survivors), do: node_unavailable()
   def classify(:unavailable), do: node_unavailable()
+  def classify(:database_owner_unavailable), do: node_unavailable()
 
   def classify(:database_not_active),
     do: {:service_unavailable, "database_unavailable", "database is not active"}

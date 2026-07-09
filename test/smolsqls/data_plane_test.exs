@@ -178,4 +178,45 @@ defmodule Smolsqls.DataPlaneTest do
       refute File.exists?(object_path)
     end
   end
+
+  describe "owner-node resolution" do
+    test "an owner name never known to this VM returns a clean error, does not raise, and interns no atom" do
+      tenant = tenant_fixture()
+      database = placed_database_fixture(tenant)
+
+      unknown = "smolsqls@vanished-#{System.unique_integer([:positive])}"
+      assert_raise ArgumentError, fn -> String.to_existing_atom(unknown) end
+
+      assert DataPlane.activate_database(%{database | node: unknown}) ==
+               {:error, :database_owner_unavailable}
+
+      assert_raise ArgumentError, fn -> String.to_existing_atom(unknown) end
+    end
+
+    test "a down owner whose atom is already interned returns a clean error, never a raise" do
+      tenant = tenant_fixture()
+      database = placed_database_fixture(tenant)
+
+      down_known = :"smolsqls@down-known-owner"
+      refute down_known in Node.list()
+
+      assert DataPlane.activate_database(%{database | node: to_string(down_known)}) ==
+               {:error, :database_owner_unavailable}
+    end
+
+    test "a nil owner resolves to the local node" do
+      tenant = tenant_fixture()
+      database = placed_database_fixture(tenant)
+
+      assert {:ok, _} = DataPlane.activate_database(%{database | node: nil})
+    end
+
+    test "an owner name equal to this node resolves locally" do
+      tenant = tenant_fixture()
+      database = placed_database_fixture(tenant)
+
+      assert database.node == to_string(Node.self())
+      assert {:ok, _} = DataPlane.activate_database(database)
+    end
+  end
 end

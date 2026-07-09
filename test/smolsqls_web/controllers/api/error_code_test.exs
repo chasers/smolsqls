@@ -36,6 +36,9 @@ defmodule SmolsqlsWeb.Api.ErrorCodeTest do
                ErrorCode.classify({:badtcp, :closed})
 
       assert {:service_unavailable, "node_unavailable", _} = ErrorCode.classify(:no_survivors)
+
+      assert {:service_unavailable, "node_unavailable", _} =
+               ErrorCode.classify(:database_owner_unavailable)
     end
 
     test "missing artifacts classify as backup_not_found" do

@@ -63,7 +63,7 @@ full detail is in the logs. Generally retryable.
 | `object_storage_delete` | 502 | Deleting an object failed. |
 | `object_storage_error` | 502 | An object-store operation failed (operation not attributed). |
 | `replication_error` | 502 | A litestream replication/restore operation failed. |
-| `node_unavailable` | 503 | The node serving this database is temporarily unreachable (inter-node RPC failure or no healthy placement). |
+| `node_unavailable` | 503 | The node serving this database is temporarily unreachable (inter-node RPC failure, no healthy placement, or the recorded owner node has left the cluster — resolves once the placement row is reclaimed on the owner's boot or reassigned by evacuation). |
 | `database_not_running` | 503 | The database is not currently placed on any node. |
 | `database_unavailable` | 503 | The database is not active (not started, or its file is missing). |
 | `internal_error` | 500 | An unclassified internal failure. The catch-all — its raw cause is only in the logs. |

@@ -133,19 +133,28 @@ defmodule Smolsqls.DataPlane do
   end
 
   defp on_owner_node(%Database{} = database, function, args) do
-    owner =
-      case database.node do
-        nil -> Node.self()
-        node_name -> String.to_existing_atom(node_name)
+    with {:ok, owner} <- resolve_owner(database) do
+      if owner == Node.self() do
+        apply(__MODULE__, function, args)
+      else
+        case :gen_rpc.call(owner, __MODULE__, function, args, @gen_rpc_timeout) do
+          {:badrpc, reason} -> {:error, {:badrpc, reason}}
+          {:badtcp, reason} -> {:error, {:badtcp, reason}}
+          result -> result
+        end
       end
+    end
+  end
 
-    if owner == Node.self() do
-      apply(__MODULE__, function, args)
+  defp resolve_owner(%Database{node: nil}), do: {:ok, Node.self()}
+
+  defp resolve_owner(%Database{node: name}) do
+    if name == to_string(Node.self()) do
+      {:ok, Node.self()}
     else
-      case :gen_rpc.call(owner, __MODULE__, function, args, @gen_rpc_timeout) do
-        {:badrpc, reason} -> {:error, {:badrpc, reason}}
-        {:badtcp, reason} -> {:error, {:badtcp, reason}}
-        result -> result
+      case Enum.find(Node.list(), &(to_string(&1) == name)) do
+        nil -> {:error, :database_owner_unavailable}
+        node -> {:ok, node}
       end
     end
   end
