@@ -26,8 +26,10 @@ defmodule SmolsqlsWeb.Api.IndexController do
           "echoed by later GETs.",
       error_format:
         "Errors (4xx/5xx) are {\"error\": {\"code\": <string>, \"message\": <string>}}. " <>
-          "Validation errors use {\"error\": {\"code\": \"validation_failed\", " <>
-          "\"details\": {<field>: [<message>]}}}.",
+          "\"code\" is a stable textual class (e.g. \"not_found\", \"object_storage_put\"). " <>
+          "5xx errors also include a \"request_id\" for log correlation; raw internal " <>
+          "detail is logged server-side, never returned. Validation errors use " <>
+          "{\"error\": {\"code\": \"validation_failed\", \"details\": {<field>: [<message>]}}}.",
       endpoints: [
         %{
           method: "POST",

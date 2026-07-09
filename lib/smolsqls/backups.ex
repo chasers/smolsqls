@@ -139,9 +139,14 @@ defmodule Smolsqls.Backups do
 
   defp promote_idle_snapshot(%Database{} = database, object_key) do
     case Smolsqls.ObjectStore.copy(IdleSnapshots.object_key(database), object_key) do
-      {:ok, size_bytes} -> {:ok, %{object_key: object_key, size_bytes: size_bytes}}
-      {:error, :not_found} -> DataPlane.backup_database(database, object_key)
-      {:error, _reason} = error -> error
+      {:ok, size_bytes} ->
+        {:ok, %{object_key: object_key, size_bytes: size_bytes}}
+
+      {:error, {:object_store, :copy, :not_found}} ->
+        DataPlane.backup_database(database, object_key)
+
+      {:error, _reason} = error ->
+        error
     end
   end
 

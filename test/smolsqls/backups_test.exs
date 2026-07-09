@@ -106,7 +106,7 @@ defmodule Smolsqls.BackupsTest do
 
     assert Backups.list(database) == []
 
-    assert {:error, :not_found} =
+    assert {:error, {:object_store, :fetch, :not_found}} =
              Smolsqls.ObjectStore.fetch_to_file(backup.object_key, "/tmp/nope.db")
   end
 

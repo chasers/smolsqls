@@ -2,6 +2,8 @@ defmodule SmolsqlsWeb.DatabaseLive.Index do
   use SmolsqlsWeb, :live_view
 
   alias Smolsqls.ControlPlane
+  alias SmolsqlsWeb.Api.ErrorCode
+  alias SmolsqlsWeb.ChangesetError
 
   @page_size 25
 
@@ -39,10 +41,11 @@ defmodule SmolsqlsWeb.DatabaseLive.Index do
          |> load_databases()}
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        {:noreply, put_flash(socket, :error, "Invalid name: #{inspect(changeset.errors[:name])}")}
+        {:noreply, put_flash(socket, :error, "Invalid: #{ChangesetError.message(changeset)}")}
 
       {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Create failed: #{inspect(reason)}")}
+        {_status, _code, message} = ErrorCode.classify(reason)
+        {:noreply, put_flash(socket, :error, "Create failed: #{message}")}
     end
   end
 
@@ -91,7 +94,7 @@ defmodule SmolsqlsWeb.DatabaseLive.Index do
         {:noreply, put_flash(socket, :error, "Database limit reached")}
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        {:noreply, put_flash(socket, :error, "Invalid name: #{inspect(changeset.errors[:name])}")}
+        {:noreply, put_flash(socket, :error, "Invalid: #{ChangesetError.message(changeset)}")}
 
       _ ->
         {:noreply, put_flash(socket, :error, "Branch failed")}

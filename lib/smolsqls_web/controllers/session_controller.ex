@@ -2,6 +2,7 @@ defmodule SmolsqlsWeb.SessionController do
   use SmolsqlsWeb, :controller
 
   alias Smolsqls.ControlPlane
+  alias SmolsqlsWeb.ChangesetError
 
   def create(conn, %{"api_key" => api_key}) do
     case ControlPlane.authenticate_tenant(api_key) do
@@ -35,7 +36,7 @@ defmodule SmolsqlsWeb.SessionController do
 
       {:error, changeset} ->
         conn
-        |> put_flash(:error, "Could not create tenant: #{inspect(changeset.errors)}")
+        |> put_flash(:error, "Could not create tenant: #{ChangesetError.message(changeset)}")
         |> redirect(to: ~p"/")
     end
   end

@@ -12,7 +12,10 @@ defmodule SmolsqlsWeb.Hrana.Stmt do
   when not (the stateless HTTP pipeline).
   """
 
+  require Logger
+
   alias Smolsqls.DataPlane
+  alias SmolsqlsWeb.Api.ErrorCode
 
   @type ctx :: %{
           database: Smolsqls.ControlPlane.Database.t(),
@@ -201,13 +204,18 @@ defmodule SmolsqlsWeb.Hrana.Stmt do
     limits.query_timeout_ms || :timer.seconds(30)
   end
 
-  defp format_reason(:query_timeout), do: "query timed out"
+  defp format_reason(reason) do
+    {status, code, message} = ErrorCode.classify(reason)
 
-  defp format_reason(:database_busy_in_transaction),
-    do: "database is locked by another connection's open transaction; retry shortly"
+    if ErrorCode.loggable?(status) do
+      Logger.error(
+        "hrana error code=#{code} request_id=#{Logger.metadata()[:request_id]} " <>
+          "reason=#{inspect(reason, printable_limit: 2048, limit: 50)}"
+      )
+    end
 
-  defp format_reason(reason) when is_binary(reason), do: reason
-  defp format_reason(reason), do: inspect(reason)
+    message
+  end
 
   defp decode_value(%{"type" => "null"}), do: nil
 

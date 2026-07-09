@@ -177,7 +177,10 @@ test use `Smolsqls.Infra.Local` (backups via `VACUUM INTO`).
 The full lifecycle is drivable over HTTP with no human steps. Every
 successful response is a JSON object `{"data": <object>}` (list
 endpoints add a top-level `next` cursor); errors are
-`{"error": {"code", "message"}}`. Secrets and connection strings
+`{"error": {"code", "message"}}`, where `code` is a stable textual class
+(e.g. `not_found`, `object_storage_put`) and 5xx errors add a `request_id`
+for log correlation — raw internal detail is logged, never returned
+([full code list](docs/api-errors.md)). Secrets and connection strings
 (`api_key`, `auth_token`, `connections`) come back only in the create
 response and are never echoed by later reads — `GET /v1` documents the
 full contract.

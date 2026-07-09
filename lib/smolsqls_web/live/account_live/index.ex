@@ -2,6 +2,7 @@ defmodule SmolsqlsWeb.AccountLive.Index do
   use SmolsqlsWeb, :live_view
 
   alias Smolsqls.ControlPlane
+  alias SmolsqlsWeb.ChangesetError
 
   @impl true
   def mount(_params, session, socket) do
@@ -34,7 +35,7 @@ defmodule SmolsqlsWeb.AccountLive.Index do
          |> load_keys()}
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        {:noreply, put_flash(socket, :error, "Invalid: #{inspect(changeset.errors)}")}
+        {:noreply, put_flash(socket, :error, "Invalid: #{ChangesetError.message(changeset)}")}
     end
   end
 
