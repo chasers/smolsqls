@@ -61,6 +61,15 @@ defmodule Smolsqls.DataPlane do
   end
 
   @doc """
+  The source replica's available point-in-time range (`%{earliest:, latest:}`).
+  Reads the object store only, so it runs on whatever node orchestrates the
+  branch. Used to clamp a requested point-in-time to what the replica holds.
+  """
+  @spec replica_range(Database.t()) ::
+          {:ok, %{earliest: DateTime.t(), latest: DateTime.t()}} | {:error, term()}
+  def replica_range(%Database{} = database), do: Litestream.replica_range(database)
+
+  @doc """
   Seeds a branch from a point in time: restores the source's litestream
   replica to `timestamp` into a temp file, then uploads it to the branch's
   idle-snapshot key, from which `place_branch/1` restores it. Reads from the

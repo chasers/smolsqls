@@ -78,15 +78,66 @@ defmodule Smolsqls.DataPlane.Litestream do
     end
   end
 
+  @doc """
+  The replica's available point-in-time range, from `litestream ltx`: the
+  earliest and latest transaction timestamps across all compaction levels. Used
+  to clamp a branch's requested point-in-time to what the replica actually
+  holds. Reads the object store only.
+
+  Returns `{:error, :no_replica}` when the replica has no LTX files yet, and
+  `{:error, :litestream_disabled}` when litestream is off.
+  """
+  @spec replica_range(Database.t()) ::
+          {:ok, %{earliest: DateTime.t(), latest: DateTime.t()}} | {:error, term()}
+  def replica_range(%Database{} = database) do
+    if enabled?() do
+      with {:ok, output} <-
+             cmd(["ltx", "-level", "all", "-json", replica_url(database)],
+               stderr_to_stdout: false
+             ) do
+        parse_ltx_range(output)
+      end
+    else
+      {:error, :litestream_disabled}
+    end
+  end
+
+  defp parse_ltx_range(output) do
+    with {:ok, entries} when is_list(entries) <- Jason.decode(output),
+         stamps =
+           for(
+             %{"timestamp" => ts} <- entries,
+             {:ok, dt, _} <- [DateTime.from_iso8601(ts)],
+             do: dt
+           ),
+         [_ | _] <- stamps do
+      {:ok, %{earliest: Enum.min(stamps, DateTime), latest: Enum.max(stamps, DateTime)}}
+    else
+      _ -> {:error, :no_replica}
+    end
+  end
+
   @spec replica_url(Database.t()) :: String.t()
   def replica_url(%Database{} = database) do
     "#{config()[:replica_url_prefix]}/#{database.tenant_id}/#{database.id}"
   end
 
   defp run(args) do
-    case System.cmd(config()[:binary] || "litestream", args, stderr_to_stdout: true, env: env()) do
-      {_output, 0} ->
-        :ok
+    case cmd(args) do
+      {:ok, _output} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp cmd(args, opts \\ []) do
+    merge_stderr = Keyword.get(opts, :stderr_to_stdout, true)
+
+    case System.cmd(config()[:binary] || "litestream", args,
+           stderr_to_stdout: merge_stderr,
+           env: env()
+         ) do
+      {output, 0} ->
+        {:ok, output}
 
       {output, status} ->
         Logger.warning(

@@ -31,7 +31,11 @@ defmodule Smolsqls do
     * **from a point in time** — when `attrs["timestamp"]` is given, the
       source's litestream replica restored to that instant. Requires the
       source to have litestream enabled and the timestamp within the
-      recoverable window (last #{@pitr_window_days} days).
+      recoverable window (last #{@pitr_window_days} days). A timestamp newer
+      than the latest replicated point is clamped to it (so "as of now" on an
+      idle database branches the freshest available state); one older than the
+      replica's earliest point is rejected. `branch_point_at` records the
+      effective (clamped) point, not the requested one.
 
   Zero impact on the source's writer either way. Creates the child row with
   lineage and places it, restoring the seeded bytes. On a failure after the
@@ -60,10 +64,25 @@ defmodule Smolsqls do
     {:error, :point_in_time_requires_litestream}
   end
 
-  defp resolve_seed(%Database{}, timestamp) do
+  defp resolve_seed(%Database{} = source, timestamp) do
     with {:ok, at} <- parse_timestamp(timestamp),
-         :ok <- check_window(at) do
-      {:ok, {:pitr, at}}
+         :ok <- check_window(at),
+         {:ok, effective_at} <- clamp_to_replica(source, at) do
+      {:ok, {:pitr, effective_at}}
+    end
+  end
+
+  defp clamp_to_replica(%Database{} = source, %DateTime{} = at) do
+    case DataPlane.replica_range(source) do
+      {:ok, %{earliest: earliest, latest: latest}} ->
+        cond do
+          DateTime.compare(at, earliest) == :lt -> {:error, :timestamp_out_of_window}
+          DateTime.compare(at, latest) == :gt -> {:ok, latest}
+          true -> {:ok, at}
+        end
+
+      {:error, _reason} ->
+        {:ok, at}
     end
   end
 
