@@ -310,6 +310,16 @@ their snapshots), reassigns placement rows to the survivors, and the
 operator reports progress on `status.drain`. Re-draining a node
 requires deleting its `node_drains` row.
 
+**Multi-region** (in progress): nodes advertise their name over the shared
+metadb and connect by it, so cross-region clustering needs names that resolve
+and route from every region. A node defaults to its single-cluster headless
+DNS name; set `RELEASE_NODE_HOST` to a cross-cluster-routable host (e.g. a GKE
+Multi-Cluster-Services clusterset FQDN over a shared VPC) for a multi-region
+cluster. The application already proxies queries to a database's owning region
+over `gen_rpc`; the remaining work is the deploy topology (per-region clusters,
+a global load balancer) and hardening the single-writer guarantee against WAN
+partitions — tracked in the `regional-placement` plan.
+
 Local end-to-end cluster (kind + in-cluster Postgres with
 `wal_level=logical` + MinIO):
 
