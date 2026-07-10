@@ -123,7 +123,9 @@ defmodule Smolsqls.ControlPlane.Database do
         changeset
 
       regions ->
-        validate_inclusion(changeset, :region, regions, message: "is not a supported region")
+        changeset
+        |> validate_required([:region])
+        |> validate_inclusion(:region, regions, message: "is not a supported region")
     end
   end
 end
