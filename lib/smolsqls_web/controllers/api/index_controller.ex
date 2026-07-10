@@ -147,6 +147,12 @@ defmodule SmolsqlsWeb.Api.IndexController do
         },
         %{method: "POST", path: "#{base}/v1/databases/:id/backups", auth: "tenant api_key"},
         %{
+          method: "GET",
+          path: "#{base}/v1/databases/:id/backups/:backup_id/download",
+          auth: "tenant api_key",
+          returns: "the backup's SQLite file (application/vnd.sqlite3) as a download"
+        },
+        %{
           method: "POST",
           path: "#{base}/v1/databases/:id/restore",
           auth: "tenant api_key",

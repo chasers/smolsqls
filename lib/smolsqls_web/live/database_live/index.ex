@@ -686,15 +686,24 @@ defmodule SmolsqlsWeb.DatabaseLive.Index do
                           {backup.origin}
                         </span>
                       </span>
-                      <button
-                        class="btn btn-ghost btn-xs"
-                        phx-click="restore"
-                        phx-value-id={database.id}
-                        phx-value-backup-id={backup.id}
-                        data-confirm="Restore this backup? Current data will be replaced."
-                      >
-                        Restore
-                      </button>
+                      <span class="flex items-center gap-1">
+                        <.link
+                          href={~p"/dashboard/databases/#{database.id}/backups/#{backup.id}/download"}
+                          class="btn btn-ghost btn-xs"
+                          download
+                        >
+                          Download
+                        </.link>
+                        <button
+                          class="btn btn-ghost btn-xs"
+                          phx-click="restore"
+                          phx-value-id={database.id}
+                          phx-value-backup-id={backup.id}
+                          data-confirm="Restore this backup? Current data will be replaced."
+                        >
+                          Restore
+                        </button>
+                      </span>
                     </li>
                   </ul>
                 </div>
