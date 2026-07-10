@@ -240,6 +240,62 @@ defmodule SmolsqlsWeb.Api.ApiFlowTest do
 
       assert {:ok, %{rows: [["keep"]]}} = DataPlane.query(database.id, "SELECT v FROM t")
     end
+
+    test "download returns the backup's SQLite file", %{conn: conn} do
+      tenant = tenant_fixture()
+      database = placed_database_fixture(tenant)
+      {:ok, _} = DataPlane.query(database.id, "CREATE TABLE t (v TEXT)")
+      on_exit(fn -> Smolsqls.Backups.delete_all(database) end)
+
+      backup_id =
+        conn
+        |> authed(tenant.api_key)
+        |> post(~p"/v1/databases/#{database.id}/backups")
+        |> json_response(201)
+        |> get_in(["data", "id"])
+
+      resp =
+        conn
+        |> authed(tenant.api_key)
+        |> get(~p"/v1/databases/#{database.id}/backups/#{backup_id}/download")
+
+      body = response(resp, 200)
+      assert String.starts_with?(body, "SQLite format 3")
+      assert ["application/vnd.sqlite3"] = get_resp_header(resp, "content-type")
+      assert [disposition] = get_resp_header(resp, "content-disposition")
+      assert disposition =~ ".db"
+    end
+
+    test "download 404s for an unknown backup", %{conn: conn} do
+      tenant = tenant_fixture()
+      database = placed_database_fixture(tenant)
+
+      conn
+      |> authed(tenant.api_key)
+      |> get(~p"/v1/databases/#{database.id}/backups/#{Ecto.UUID.generate()}/download")
+      |> json_response(404)
+    end
+
+    test "download won't cross tenants", %{conn: conn} do
+      owner = tenant_fixture()
+      database = placed_database_fixture(owner)
+      {:ok, _} = DataPlane.query(database.id, "CREATE TABLE t (v TEXT)")
+      on_exit(fn -> Smolsqls.Backups.delete_all(database) end)
+
+      backup_id =
+        conn
+        |> authed(owner.api_key)
+        |> post(~p"/v1/databases/#{database.id}/backups")
+        |> json_response(201)
+        |> get_in(["data", "id"])
+
+      other = tenant_fixture()
+
+      conn
+      |> authed(other.api_key)
+      |> get(~p"/v1/databases/#{database.id}/backups/#{backup_id}/download")
+      |> json_response(404)
+    end
   end
 
   describe "branch over the API" do

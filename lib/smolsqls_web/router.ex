@@ -35,6 +35,10 @@ defmodule SmolsqlsWeb.Router do
 
     live "/dashboard", DatabaseLive.Index, :index
     live "/account", AccountLive.Index, :index
+
+    get "/dashboard/databases/:database_id/backups/:backup_id/download",
+        BackupDownloadController,
+        :show
   end
 
   scope "/v1", SmolsqlsWeb.Api do
@@ -86,6 +90,7 @@ defmodule SmolsqlsWeb.Router do
 
     get "/databases/:database_id/backups", BackupController, :index
     post "/databases/:database_id/backups", BackupController, :create
+    get "/databases/:database_id/backups/:backup_id/download", BackupController, :download
     post "/databases/:database_id/restore", BackupController, :restore
 
     post "/databases/:database_id/branch", DatabaseController, :branch

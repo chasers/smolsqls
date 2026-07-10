@@ -233,6 +233,28 @@ defmodule Smolsqls.Backups do
     end
   end
 
+  @doc """
+  Fetches a backup's artifact from the object store into `dest_path` (gunzipped
+  to a logical SQLite file) for download. Reads the object store directly from
+  the calling node — no owning-node hop, since the bytes go to the client, not
+  to the database's disk. Returns the `Backup` for its metadata (filename,
+  size).
+  """
+  @spec fetch_to_file(Database.t(), String.t(), Path.t()) ::
+          {:ok, Backup.t()} | {:error, :not_found | term()}
+  def fetch_to_file(%Database{} = database, backup_id, dest_path) do
+    case get(database, backup_id) do
+      %Backup{object_key: object_key} = backup ->
+        case Smolsqls.ObjectStore.fetch_to_file(object_key, dest_path) do
+          :ok -> {:ok, backup}
+          {:error, reason} -> {:error, reason}
+        end
+
+      nil ->
+        {:error, :not_found}
+    end
+  end
+
   @spec delete_all(Database.t()) :: :ok
   def delete_all(%Database{} = database) do
     database

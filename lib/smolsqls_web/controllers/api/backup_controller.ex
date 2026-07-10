@@ -30,6 +30,12 @@ defmodule SmolsqlsWeb.Api.BackupController do
     end
   end
 
+  def download(conn, %{"database_id" => database_id, "backup_id" => backup_id}) do
+    with {:ok, database} <- fetch_database(conn, database_id) do
+      SmolsqlsWeb.BackupDownload.serve(conn, database, backup_id)
+    end
+  end
+
   defp fetch_database(conn, id) do
     case ControlPlane.get_database(conn.assigns.current_tenant, id) do
       nil -> {:error, :not_found}

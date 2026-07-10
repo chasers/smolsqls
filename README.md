@@ -66,7 +66,10 @@ copy for a cold database (no activation) and snapshotting the live
 writer for a hot one. These appear in the backups list alongside
 `manual` backups. This is a daily *artifact* floor, not point-in-time
 recovery; continuous durability for premium databases is litestream's
-job.
+job. Any backup can be **downloaded** as a plain SQLite file —
+`GET /v1/databases/:id/backups/:backup_id/download` (tenant api_key) or the
+dashboard's Download action — served straight from the object store
+(gunzipped), so no restore is needed to inspect one locally.
 
 **Branching**: fork any database into a new, independent one —
 `POST /v1/databases/:id/branch` or the dashboard's Branch action. A
@@ -239,9 +242,11 @@ curl -X POST http://localhost:4000/v1/databases/$DB_ID/query \
   -H 'content-type: application/json' \
   -d '{"sql": "SELECT 1"}'
 
-# trigger / list backups, restore
+# trigger / list backups, download one as a .db file, restore
 curl -X POST http://localhost:4000/v1/databases/$DB_ID/backups \
   -H "authorization: Bearer $API_KEY"
+curl -X GET http://localhost:4000/v1/databases/$DB_ID/backups/$BACKUP_ID/download \
+  -H "authorization: Bearer $API_KEY" -o backup.db
 curl -X POST http://localhost:4000/v1/databases/$DB_ID/restore \
   -H "authorization: Bearer $API_KEY" \
   -H 'content-type: application/json' \
