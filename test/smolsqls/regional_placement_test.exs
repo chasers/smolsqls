@@ -49,6 +49,16 @@ defmodule Smolsqls.RegionalPlacementTest do
 
       assert %{region: _} = errors_on(changeset)
     end
+
+    test "requires a region when regions are configured and no default applies" do
+      Application.put_env(:smolsqls, :default_region, nil)
+      tenant = tenant_fixture()
+
+      assert {:error, changeset} =
+               ControlPlane.create_database(tenant, %{"name" => "regdb"})
+
+      assert %{region: ["can't be blank"]} = errors_on(changeset)
+    end
   end
 
   describe "branch inheritance" do

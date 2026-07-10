@@ -17,6 +17,7 @@ defmodule SmolsqlsWeb.DatabaseLive.Index do
          |> assign(:tenant, tenant)
          |> assign(:page_title, "Databases")
          |> assign(:regions, Smolsqls.Regions.all())
+         |> assign(:default_region, Smolsqls.Regions.default())
          |> assign(:new_database_form, to_form(%{"name" => "", "region" => ""}))
          |> assign(:new_token_form, to_form(%{"name" => ""}))
          |> assign(:branch_form, to_form(%{"name" => ""}))
@@ -418,9 +419,15 @@ defmodule SmolsqlsWeb.DatabaseLive.Index do
                 :if={@regions != []}
                 name="region"
                 class="select select-bordered font-mono text-sm"
+                required
               >
-                <option value="">default region</option>
-                <option :for={region <- @regions} value={region}>{region}</option>
+                <option
+                  :for={region <- @regions}
+                  value={region}
+                  selected={region == @default_region}
+                >
+                  {region}
+                </option>
               </select>
               <button class="btn btn-primary">Create</button>
             </.form>

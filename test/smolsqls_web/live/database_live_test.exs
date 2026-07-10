@@ -31,6 +31,23 @@ defmodule SmolsqlsWeb.DatabaseLive.IndexTest do
     assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/dashboard")
   end
 
+  test "create form shows a region dropdown defaulting to the configured default", %{conn: conn} do
+    Application.put_env(:smolsqls, :regions, ["gcp-us-central1", "gcp-europe-west1"])
+    Application.put_env(:smolsqls, :default_region, "gcp-us-central1")
+
+    on_exit(fn ->
+      Application.put_env(:smolsqls, :regions, [])
+      Application.put_env(:smolsqls, :default_region, nil)
+    end)
+
+    tenant = tenant_fixture()
+    {:ok, _view, html} = live(authed_conn(conn, tenant), ~p"/dashboard")
+
+    assert html =~ ~s(name="region")
+    assert html =~ "gcp-europe-west1"
+    assert html =~ ~r/<option[^>]*value="gcp-us-central1"[^>]*selected/
+  end
+
   test "branches a database from its snapshot and nests it under the parent", %{conn: conn} do
     tenant = tenant_fixture()
     source = snapshotted_database(tenant)
