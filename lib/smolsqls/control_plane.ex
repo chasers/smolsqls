@@ -23,6 +23,7 @@ defmodule Smolsqls.ControlPlane do
   import Ecto.Query
 
   alias Smolsqls.ControlPlane.{Database, DatabaseToken, Tenant, TenantApiKey}
+  alias Smolsqls.ControlPlane.Node, as: NodeRow
   alias Smolsqls.ReadModel
   alias Smolsqls.Repo
 
@@ -497,6 +498,7 @@ defmodule Smolsqls.ControlPlane do
       |> Map.put("tenant_id", source.tenant_id)
       |> Map.put_new("source_database_id", source.id)
       |> Map.put_new("branch_point_at", DateTime.utc_now())
+      |> put_source_region(source)
 
     Repo.transaction(fn ->
       with {:ok, database} <-
@@ -528,6 +530,11 @@ defmodule Smolsqls.ControlPlane do
     end
   end
 
+  defp put_source_region(attrs, %Database{region: nil}), do: attrs
+
+  defp put_source_region(attrs, %Database{region: region}),
+    do: Map.put_new(attrs, "region", region)
+
   def update_database_settings(%Database{} = database, attrs) do
     database
     |> Database.settings_changeset(attrs)
@@ -544,6 +551,57 @@ defmodule Smolsqls.ControlPlane do
     })
     |> Repo.update()
     |> write_through(&ReadModel.put_database/1)
+  end
+
+  @doc """
+  Upserts a node's cluster identity and region into the `nodes` table.
+  Idempotent per `node_name`; called on boot by `Smolsqls.NodeRegistry`.
+  """
+  @spec upsert_node(String.t(), String.t()) :: {:ok, NodeRow.t()} | {:error, Ecto.Changeset.t()}
+  def upsert_node(node_name, region) do
+    now = DateTime.utc_now()
+    cloud = Smolsqls.Regions.cloud(region)
+
+    %NodeRow{}
+    |> NodeRow.changeset(%{
+      node_name: node_name,
+      region: region,
+      cloud: cloud,
+      status: "up",
+      last_seen_at: now
+    })
+    |> Repo.insert(
+      on_conflict: [
+        set: [region: region, cloud: cloud, status: "up", last_seen_at: now, updated_at: now]
+      ],
+      conflict_target: :node_name
+    )
+  end
+
+  @doc """
+  Refreshes a node's `last_seen_at` heartbeat. No-op if the row is absent.
+  """
+  @spec heartbeat_node(String.t()) :: :ok
+  def heartbeat_node(node_name) do
+    now = DateTime.utc_now()
+
+    NodeRow
+    |> where([n], n.node_name == ^node_name)
+    |> Repo.update_all(set: [last_seen_at: now, status: "up", updated_at: now])
+
+    :ok
+  end
+
+  @doc """
+  The node names recorded in a given region. Region-aware placement
+  intersects these with the live cluster to pick an owner.
+  """
+  @spec nodes_in_region(String.t()) :: [String.t()]
+  def nodes_in_region(region) do
+    NodeRow
+    |> where([n], n.region == ^region)
+    |> select([n], n.node_name)
+    |> Repo.all()
   end
 
   @doc """

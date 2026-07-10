@@ -4,6 +4,7 @@ defmodule SmolsqlsWeb.DatabaseLive.Index do
   alias Smolsqls.ControlPlane
   alias SmolsqlsWeb.Api.ErrorCode
   alias SmolsqlsWeb.ChangesetError
+  alias SmolsqlsWeb.ConnectionStrings
 
   @page_size 25
 
@@ -15,7 +16,8 @@ defmodule SmolsqlsWeb.DatabaseLive.Index do
          socket
          |> assign(:tenant, tenant)
          |> assign(:page_title, "Databases")
-         |> assign(:new_database_form, to_form(%{"name" => ""}))
+         |> assign(:regions, Smolsqls.Regions.all())
+         |> assign(:new_database_form, to_form(%{"name" => "", "region" => ""}))
          |> assign(:new_token_form, to_form(%{"name" => ""}))
          |> assign(:branch_form, to_form(%{"name" => ""}))
          |> assign(:branching_database_id, nil)
@@ -31,13 +33,15 @@ defmodule SmolsqlsWeb.DatabaseLive.Index do
   end
 
   @impl true
-  def handle_event("create", %{"name" => name}, socket) do
-    case Smolsqls.create_database(socket.assigns.tenant, %{"name" => name}) do
+  def handle_event("create", %{"name" => name} = params, socket) do
+    attrs = maybe_put_region(%{"name" => name}, params)
+
+    case Smolsqls.create_database(socket.assigns.tenant, attrs) do
       {:ok, database} ->
         {:noreply,
          socket
          |> put_flash(:info, "Database #{database.name} created")
-         |> assign(:new_database_form, to_form(%{"name" => ""}))
+         |> assign(:new_database_form, to_form(%{"name" => "", "region" => ""}))
          |> load_databases()}
 
       {:error, %Ecto.Changeset{} = changeset} ->
@@ -284,20 +288,24 @@ defmodule SmolsqlsWeb.DatabaseLive.Index do
     end
   end
 
+  defp maybe_put_region(attrs, params) do
+    case params["region"] do
+      region when is_binary(region) and region != "" -> Map.put(attrs, "region", region)
+      _ -> attrs
+    end
+  end
+
   defp connection_string(token) do
-    host = SmolsqlsWeb.Endpoint.host()
-    port = SmolsqlsWeb.Endpoint.url() |> URI.parse() |> Map.get(:port)
-    "libsql://#{host}:#{port}?authToken=#{token}"
+    ConnectionStrings.libsql_url(ConnectionStrings.global_host(), token)
   end
 
   defp query_url(database) do
-    SmolsqlsWeb.Endpoint.url() <> "/v1/databases/#{database.id}/query"
+    ConnectionStrings.http_base(ConnectionStrings.global_host()) <>
+      "/v1/databases/#{database.id}/query"
   end
 
   defp libsql_url do
-    uri = URI.parse(SmolsqlsWeb.Endpoint.url())
-    scheme = if uri.scheme == "https", do: "wss", else: "ws"
-    "#{scheme}://#{uri.host}:#{uri.port}"
+    ConnectionStrings.ws_base(ConnectionStrings.global_host())
   end
 
   defp curl_examples(database, token) do
@@ -378,6 +386,14 @@ defmodule SmolsqlsWeb.DatabaseLive.Index do
                 class="input input-bordered flex-1 font-mono text-sm"
                 required
               />
+              <select
+                :if={@regions != []}
+                name="region"
+                class="select select-bordered font-mono text-sm"
+              >
+                <option value="">default region</option>
+                <option :for={region <- @regions} value={region}>{region}</option>
+              </select>
               <button class="btn btn-primary">Create</button>
             </.form>
           </div>
@@ -412,6 +428,13 @@ defmodule SmolsqlsWeb.DatabaseLive.Index do
                   </span>
                   <span :if={database.source_database_id} class="badge badge-sm badge-ghost">
                     branch
+                  </span>
+                  <span
+                    :if={database.region}
+                    class="badge badge-sm badge-soft badge-neutral font-mono"
+                    title="region"
+                  >
+                    {database.region}
                   </span>
                   <span :if={database.expires_at} class="text-xs text-base-content/50">
                     expires {Calendar.strftime(database.expires_at, "%Y-%m-%d %H:%M UTC")}

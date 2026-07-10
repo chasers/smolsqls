@@ -85,6 +85,14 @@ if config_env() == :prod do
 
   config :smolsqls, data_dir: System.get_env("DATA_DIR") || "/var/lib/smolsqls/data"
 
+  config :smolsqls,
+    region: System.get_env("REGION"),
+    regions:
+      (System.get_env("REGIONS") || "")
+      |> String.split(",", trim: true)
+      |> Enum.map(&String.trim/1),
+    default_region: System.get_env("DEFAULT_REGION")
+
   config :smolsqls, Smolsqls.ObjectStore,
     adapter: Smolsqls.ObjectStore.S3,
     bucket: System.get_env("S3_BUCKET") || "smolsqls-replica",

@@ -6,7 +6,7 @@ defmodule Smolsqls.ReadModel.Row do
 
   alias Smolsqls.ControlPlane.{Database, DatabaseToken, Tenant, TenantApiKey}
 
-  @database_columns ~w(id tenant_id name status node file_path litestream_enabled snapshot_generation limits source_database_id branch_point_at expires_at inserted_at updated_at)
+  @database_columns ~w(id tenant_id name status node region cloud file_path litestream_enabled snapshot_generation limits source_database_id branch_point_at expires_at inserted_at updated_at)
   @tenant_columns ~w(id name slug limits inserted_at updated_at)
   @database_token_columns ~w(id database_id token_hash enabled expires_at inserted_at updated_at)
   @tenant_api_key_columns ~w(id tenant_id token_hash enabled expires_at inserted_at updated_at)
@@ -24,6 +24,8 @@ defmodule Smolsqls.ReadModel.Row do
       name: Map.fetch!(values, "name"),
       status: status(Map.fetch!(values, "status")),
       node: Map.get(values, "node"),
+      region: Map.get(values, "region"),
+      cloud: Map.get(values, "cloud"),
       file_path: Map.get(values, "file_path"),
       litestream_enabled: boolean(Map.get(values, "litestream_enabled")),
       snapshot_generation: integer(Map.get(values, "snapshot_generation")),

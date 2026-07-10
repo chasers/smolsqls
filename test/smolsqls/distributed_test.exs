@@ -85,6 +85,38 @@ defmodule Smolsqls.DistributedTest do
     assert File.exists?(file_path)
   end
 
+  test "region-aware placement homes a database on its region's node and queries cross-region",
+       %{peer_node: peer_node, tmp_dir: tmp_dir} do
+    region_a = "gcp-us-central1"
+    region_b = "gcp-europe-west1"
+
+    Ecto.Adapters.SQL.Sandbox.checkout(Smolsqls.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(Smolsqls.Repo, {:shared, self()})
+
+    Application.put_env(:smolsqls, :regions, [region_a, region_b])
+    on_exit(fn -> Application.put_env(:smolsqls, :regions, []) end)
+
+    {:ok, _} = Smolsqls.ControlPlane.upsert_node(to_string(Node.self()), region_a)
+    {:ok, _} = Smolsqls.ControlPlane.upsert_node(to_string(peer_node), region_b)
+
+    assert Smolsqls.DataPlane.Placement.pick_node(region_a) == Node.self()
+    assert Smolsqls.DataPlane.Placement.pick_node(region_b) == peer_node
+
+    database_id = "dist-region-#{System.unique_integer([:positive])}"
+    file_path = Path.join(tmp_dir, database_id <> ".db")
+
+    {:ok, remote_pid} = start_remote_server(peer_node, database_id, file_path)
+    wait_until(fn -> Registry.whereis(database_id) == remote_pid end)
+    assert {:ok, ^peer_node} = Registry.owner_node(database_id)
+
+    assert {:ok, _} = Router.query(database_id, "CREATE TABLE t (v TEXT)")
+
+    assert {:ok, %{num_changes: 1}} =
+             Router.query(database_id, "INSERT INTO t VALUES (?)", ["from-eu"])
+
+    assert {:ok, %{rows: [["from-eu"]]}} = Router.query(database_id, "SELECT v FROM t")
+  end
+
   test "restore_from_file/2 drains and swaps the file on the owning node",
        %{peer_node: peer_node, tmp_dir: tmp_dir} do
     database_id = "dist-db-#{System.unique_integer([:positive])}"

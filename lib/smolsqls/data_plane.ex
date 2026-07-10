@@ -15,12 +15,16 @@ defmodule Smolsqls.DataPlane do
 
   @spec place_database(Database.t()) :: {:ok, Database.t()} | {:error, term()}
   def place_database(%Database{} = database) do
-    node = Placement.pick_node()
+    case Placement.pick_node(database.region) do
+      {:error, reason} ->
+        {:error, reason}
 
-    if node == Node.self() do
-      place_database_locally(database)
-    else
-      place_database_on(node, database)
+      node ->
+        if node == Node.self() do
+          place_database_locally(database)
+        else
+          place_database_on(node, database)
+        end
     end
   end
 
@@ -102,16 +106,26 @@ defmodule Smolsqls.DataPlane do
   """
   @spec place_branch(Database.t()) :: {:ok, Database.t()} | {:error, term()}
   def place_branch(%Database{} = database) do
-    node = Placement.pick_node()
+    case Placement.pick_node(database.region) do
+      {:error, reason} ->
+        {:error, reason}
 
-    if node == Node.self() do
-      place_branch_locally(database)
-    else
-      case :gen_rpc.call(node, __MODULE__, :place_branch_locally, [database], @gen_rpc_timeout) do
-        {:badrpc, reason} -> {:error, {:badrpc, reason}}
-        {:badtcp, reason} -> {:error, {:badtcp, reason}}
-        result -> result
-      end
+      node ->
+        if node == Node.self() do
+          place_branch_locally(database)
+        else
+          case :gen_rpc.call(
+                 node,
+                 __MODULE__,
+                 :place_branch_locally,
+                 [database],
+                 @gen_rpc_timeout
+               ) do
+            {:badrpc, reason} -> {:error, {:badrpc, reason}}
+            {:badtcp, reason} -> {:error, {:badtcp, reason}}
+            result -> result
+          end
+        end
     end
   end
 

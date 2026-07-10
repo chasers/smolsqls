@@ -10,6 +10,8 @@ defmodule Smolsqls.ControlPlane.Database do
     field :name, :string
     field :status, Ecto.Enum, values: [:pending, :active, :deleting, :error], default: :pending
     field :node, :string
+    field :region, :string
+    field :cloud, :string
     field :file_path, :string
     field :auth_token, :string, virtual: true, redact: true
     field :litestream_enabled, :boolean, default: false
@@ -29,9 +31,11 @@ defmodule Smolsqls.ControlPlane.Database do
 
   def create_changeset(database, attrs) do
     database
-    |> cast(attrs, [:name, :tenant_id, :litestream_enabled])
+    |> cast(attrs, [:name, :tenant_id, :litestream_enabled, :region])
+    |> put_default_region()
     |> validate_required([:name, :tenant_id])
     |> validate_format(:name, ~r/^[a-z0-9][a-z0-9_-]*$/)
+    |> validate_region()
     |> unique_constraint([:tenant_id, :name])
     |> foreign_key_constraint(:tenant_id)
   end
@@ -48,12 +52,15 @@ defmodule Smolsqls.ControlPlane.Database do
       :name,
       :tenant_id,
       :litestream_enabled,
+      :region,
       :source_database_id,
       :branch_point_at,
       :expires_at
     ])
+    |> put_default_region()
     |> validate_required([:name, :tenant_id])
     |> validate_format(:name, ~r/^[a-z0-9][a-z0-9_-]*$/)
+    |> validate_region()
     |> unique_constraint([:tenant_id, :name])
     |> foreign_key_constraint(:tenant_id)
     |> foreign_key_constraint(:source_database_id)
@@ -67,5 +74,31 @@ defmodule Smolsqls.ControlPlane.Database do
 
   def settings_changeset(database, attrs) do
     cast(database, attrs, [:litestream_enabled])
+  end
+
+  defp put_default_region(changeset) do
+    changeset =
+      case get_field(changeset, :region) do
+        nil ->
+          case Smolsqls.Regions.default() do
+            nil -> changeset
+            default -> put_change(changeset, :region, default)
+          end
+
+        _region ->
+          changeset
+      end
+
+    put_change(changeset, :cloud, Smolsqls.Regions.cloud(get_field(changeset, :region)))
+  end
+
+  defp validate_region(changeset) do
+    case Smolsqls.Regions.all() do
+      [] ->
+        changeset
+
+      regions ->
+        validate_inclusion(changeset, :region, regions, message: "is not a supported region")
+    end
   end
 end

@@ -31,6 +31,11 @@ defmodule SmolsqlsWeb.Api.ErrorCode do
   def classify(:database_limit_reached),
     do: {:forbidden, "database_limit_reached", "tenant has reached its database limit"}
 
+  def classify(:no_capacity_in_region),
+    do:
+      {:service_unavailable, "no_capacity_in_region",
+       "no node is currently available in the requested region"}
+
   def classify(:last_api_key),
     do:
       {:unprocessable_entity, "last_api_key",

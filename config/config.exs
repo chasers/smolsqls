@@ -12,7 +12,10 @@ config :smolsqls,
   generators: [timestamp_type: :utc_datetime],
   data_dir: "/var/lib/smolsqls/data",
   infra_adapter: Smolsqls.Infra.Kubernetes,
-  database_idle_ttl: :timer.hours(1)
+  database_idle_ttl: :timer.hours(1),
+  region: nil,
+  regions: [],
+  default_region: nil
 
 config :smolsqls, Smolsqls.ReadModel, enabled: true
 

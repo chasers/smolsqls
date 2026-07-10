@@ -1,5 +1,6 @@
 defmodule SmolsqlsWeb.Api.DatabaseJSON do
   alias Smolsqls.ControlPlane.Database
+  alias SmolsqlsWeb.ConnectionStrings
 
   def index(%{databases: databases, next: next}) do
     %{data: Enum.map(databases, &data(&1, false)), next: next}
@@ -14,6 +15,8 @@ defmodule SmolsqlsWeb.Api.DatabaseJSON do
       id: database.id,
       name: database.name,
       status: database.status,
+      region: database.region,
+      cloud: database.cloud,
       litestream_enabled: database.litestream_enabled,
       created_at: database.inserted_at,
       source_database_id: database.source_database_id,
@@ -37,17 +40,34 @@ defmodule SmolsqlsWeb.Api.DatabaseJSON do
   end
 
   defp connections(%Database{} = database) do
-    host = SmolsqlsWeb.Endpoint.host()
-    port = SmolsqlsWeb.Endpoint.url() |> URI.parse() |> Map.get(:port)
+    global = %{
+      libsql: ConnectionStrings.libsql_url(ConnectionStrings.global_host(), database.auth_token),
+      http: http_connection(ConnectionStrings.global_host(), database)
+    }
 
+    case database.region do
+      region when is_binary(region) ->
+        Map.put(global, :regional, %{
+          region: region,
+          libsql:
+            ConnectionStrings.libsql_url(
+              ConnectionStrings.regional_host(region),
+              database.auth_token
+            ),
+          http: http_connection(ConnectionStrings.regional_host(region), database)
+        })
+
+      _ ->
+        global
+    end
+  end
+
+  defp http_connection(host, %Database{} = database) do
     %{
-      libsql: "libsql://#{host}:#{port}?authToken=#{database.auth_token}",
-      http: %{
-        url: SmolsqlsWeb.Endpoint.url() <> "/v1/databases/#{database.id}/query",
-        method: "POST",
-        headers: %{authorization: "Bearer #{database.auth_token}"},
-        body: %{sql: "SELECT 1", args: []}
-      }
+      url: ConnectionStrings.http_base(host) <> "/v1/databases/#{database.id}/query",
+      method: "POST",
+      headers: %{authorization: "Bearer #{database.auth_token}"},
+      body: %{sql: "SELECT 1", args: []}
     }
   end
 end

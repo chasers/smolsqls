@@ -18,7 +18,8 @@ defmodule Smolsqls.Application do
         Smolsqls.RateLimiter,
         Smolsqls.SignupLimiter,
         Smolsqls.DataPlane.Supervisor,
-        Smolsqls.DataPlane.Reconciler
+        Smolsqls.DataPlane.Reconciler,
+        Smolsqls.NodeRegistry
       ] ++
         read_model_children() ++
         enabled_child(Smolsqls.DataPlane.CacheEvictor) ++

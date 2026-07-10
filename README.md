@@ -86,6 +86,27 @@ reaps them once past. A database with branches can't be deleted until
 its branches are gone (no cascade); the dashboard nests branches under
 their parent with a count.
 
+**Regions**: a database has a **primary region** — where its file lives and
+its writer runs — chosen at create time (`{"region": "gcp-us-central1"}`,
+defaulting to `DEFAULT_REGION`) and validated against the cluster's configured
+set (`REGIONS`). A region slug is a single hyphenated DNS label combining
+hosting provider and provider-native region (`gcp-us-central1`,
+`aws-us-east-1`); the provider is stored alongside as `cloud`. Placement
+constrains a database's owner to a live node in its region — each node
+publishes its own region to a `nodes` table on boot (`REGION`) — and rejects a
+create with `no_capacity_in_region` rather than silently placing it elsewhere.
+Branches inherit their source's region. The region system is dormant when
+`REGIONS` is empty (dev, single-cluster): databases carry no region and
+placement stays purely load-based. Connection strings return a **global** host
+(`PHX_HOST`, e.g. `alpha.daisy.smolsqls.com`) that a global load balancer
+geo-routes to the nearest region — any node transparently proxies a query to
+the owner — plus a **regional** host that splices the region slug in as the
+second label (`alpha.gcp-us-central1.daisy.smolsqls.com`) to pin traffic to
+the owning region for debugging. (Multi-region deployment — per-region
+clusters, the global load balancer, and cross-region clustering — is in
+progress; the application, placement, and connection-string layers land
+first.)
+
 **Client access** — no custom client needed:
 
 - **libSQL / Hrana**: any stock libSQL client (`@libsql/client`, etc.)
