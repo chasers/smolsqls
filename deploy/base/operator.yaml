@@ -77,6 +77,10 @@ spec:
               properties:
                 databaseCount:
                   type: integer
+                region:
+                  type: string
+                  nullable: true
+                  description: geographic region this node serves (from the metadb nodes table)
                 replicationSlot:
                   type: object
                   properties:
@@ -144,6 +148,9 @@ spec:
         - name: Node
           type: string
           jsonPath: .spec.erlangNode
+        - name: Region
+          type: string
+          jsonPath: .status.region
         - name: Databases
           type: integer
           jsonPath: .status.databaseCount

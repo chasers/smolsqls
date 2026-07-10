@@ -69,6 +69,7 @@ defmodule SmolsqlsOperator.Controller.SqliteNodeController do
     update_status(axn, fn status ->
       status
       |> Map.put("replicationSlot", slot_status)
+      |> Map.put("region", node_region(erlang_node))
       |> Map.put("databaseCount", database_count(erlang_node))
       |> Map.put("drain", drain_status(erlang_node))
       |> Map.put("podReady", pod_ready)
@@ -264,6 +265,15 @@ defmodule SmolsqlsOperator.Controller.SqliteNodeController do
     case metadb_query("SELECT count(*) FROM databases WHERE node = $1", [erlang_node]) do
       {:ok, %{rows: [[count]]}} -> count
       {:error, _} -> 0
+    end
+  end
+
+  defp node_region(nil), do: nil
+
+  defp node_region(erlang_node) do
+    case metadb_query("SELECT region FROM nodes WHERE node_name = $1", [erlang_node]) do
+      {:ok, %{rows: [[region]]}} -> region
+      _ -> nil
     end
   end
 

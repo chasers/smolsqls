@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: smolsqls
+  namespace: smolsqls
+spec:
+  template:
+    spec:
+      containers:
+        - name: smolsqls
+          env:
+            # This node's own region. Its NodeRegistry upserts it into the
+            # metadb `nodes` table on boot; region-aware placement constrains
+            # a database's owner to a live node in its region.
+            - name: REGION
+              value: gcp-us-central1
+            # Cross-cluster-routable node name. $(POD_NAME) is substituted from
+            # the env defined in the base StatefulSet; the suffix is this
+            # region's GKE Multi-Cluster-Services clusterset FQDN over the
+            # shared VPC. libcluster broadcasts this verbatim and every node
+            # Node.connect()s to it, so it must resolve and route from every
+            # region.
+            - name: RELEASE_NODE_HOST
+              value: "$(POD_NAME).smolsqls-us-central1.smolsqls.svc.clusterset.local"
+            # Inter-node TLS across regions (see rel/env.sh.eex + runtime.exs).
+            - name: DIST_TLS
+              value: "true"
+            - name: GEN_RPC_TLS
+              value: "true"

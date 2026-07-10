@@ -43,6 +43,11 @@ defmodule SmolsqlsOperator.API.V1Alpha1.SqliteNode do
               nullable: true,
               properties: %{
                 databaseCount: %{type: :integer},
+                region: %{
+                  type: :string,
+                  nullable: true,
+                  description: "geographic region this node serves (from the metadb nodes table)"
+                },
                 replicationSlot: %{
                   type: :object,
                   nullable: true,
@@ -62,6 +67,7 @@ defmodule SmolsqlsOperator.API.V1Alpha1.SqliteNode do
       additionalPrinterColumns: [
         %{name: "Ordinal", type: :integer, jsonPath: ".spec.ordinal"},
         %{name: "Node", type: :string, jsonPath: ".spec.erlangNode"},
+        %{name: "Region", type: :string, jsonPath: ".status.region"},
         %{name: "Databases", type: :integer, jsonPath: ".status.databaseCount"},
         %{name: "SlotStatus", type: :string, jsonPath: ".status.replicationSlot.walStatus"},
         %{name: "SlotActive", type: :boolean, jsonPath: ".status.replicationSlot.active"},

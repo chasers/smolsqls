@@ -8,6 +8,13 @@ defmodule SmolsqlsOperatorTest do
 
     manifest = Bonny.API.CRD.to_manifest(crd)
     assert manifest.metadata.name == "sqlitenodes.smolsqls.supabase.com"
+
+    [version] = manifest.spec.versions
+    columns = Enum.map(version.additionalPrinterColumns, & &1.name)
+    assert "Region" in columns
+
+    assert %{type: :string} =
+             version.schema.openAPIV3Schema.properties.status.properties.region
   end
 
   test "controllers/2 watches SqliteNode resources" do

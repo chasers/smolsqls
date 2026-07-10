@@ -1,0 +1,33 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Per-region overlay template. One GKE cluster per region, each applying this
+# overlay with its own REGION / clusterset FQDN / object-store bucket. All
+# regions point at the single global metadb (Cloud SQL) and join one Erlang
+# cluster over the shared VPC. Copy this directory per region (region-us-central1,
+# region-europe-west1, …) and edit the region-specific values below.
+
+resources:
+  - ../../base
+
+patches:
+  - path: statefulset-region-patch.yaml
+
+# Region-specific runtime config injected as the smolsqls-env secret consumed by
+# the base StatefulSet (envFrom). Provide the real values via a sealed/managed
+# secret in the deploy pipeline; the keys are:
+#
+#   REGIONS         comma-separated set of regions a database may request,
+#                   identical across all regions (e.g. "gcp-us-central1,gcp-europe-west1")
+#   DEFAULT_REGION  region assigned when a database is created without one
+#   S3_BUCKET       this region's object-store bucket (snapshots live near the file)
+#   PHX_HOST        the global LB host (e.g. alpha.daisy.smolsqls.com) — same everywhere
+#   DATABASE_URL    the single global metadb — same everywhere
+#
+# secretGenerator:
+#   - name: smolsqls-env
+#     behavior: merge
+#     literals:
+#       - REGIONS=gcp-us-central1,gcp-europe-west1
+#       - DEFAULT_REGION=gcp-us-central1
+#       - S3_BUCKET=smolsqls-replica-us-central1
