@@ -74,6 +74,17 @@ defmodule SmolsqlsWeb.Layouts do
           >
             API
           </a>
+          <div
+            id="region-latency"
+            phx-hook=".RegionLatency"
+            class="flex items-center gap-1.5 rounded-full border border-base-300 px-2 py-0.5 font-mono text-[10px] text-base-content/60"
+            title="Region serving this session · round-trip latency"
+          >
+            <span class="inline-block size-1.5 rounded-full bg-success" aria-hidden="true"></span>
+            <span>{Smolsqls.Regions.self_region() || "local"}</span>
+            <span class="text-base-content/30">·</span>
+            <span data-latency>…</span>
+          </div>
           <.theme_toggle />
         </nav>
       </div>
@@ -86,6 +97,23 @@ defmodule SmolsqlsWeb.Layouts do
     </main>
 
     <.flash_group flash={@flash} />
+
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".RegionLatency">
+      export default {
+        mounted() {
+          const out = this.el.querySelector("[data-latency]")
+          const ping = () => {
+            const t0 = performance.now()
+            this.pushEvent("ping", {}, () => {
+              out.textContent = Math.round(performance.now() - t0) + " ms"
+            })
+          }
+          ping()
+          this.timer = setInterval(ping, 5000)
+        },
+        destroyed() { if (this.timer) clearInterval(this.timer) }
+      }
+    </script>
     """
   end
 

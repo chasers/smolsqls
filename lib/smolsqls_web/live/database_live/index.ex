@@ -35,6 +35,8 @@ defmodule SmolsqlsWeb.DatabaseLive.Index do
   end
 
   @impl true
+  def handle_event("ping", _params, socket), do: {:reply, %{}, socket}
+
   def handle_event("create", %{"name" => name} = params, socket) do
     attrs = maybe_put_region(%{"name" => name}, params)
 

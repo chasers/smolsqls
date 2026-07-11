@@ -22,6 +22,8 @@ defmodule SmolsqlsWeb.AccountLive.Index do
   end
 
   @impl true
+  def handle_event("ping", _params, socket), do: {:reply, %{}, socket}
+
   def handle_event("create_key", %{"name" => name}, socket) do
     attrs = if name == "", do: %{}, else: %{"name" => name}
 
