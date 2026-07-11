@@ -1,9 +1,21 @@
-defmodule SmolsqlsWeb.PageController do
-  use SmolsqlsWeb, :controller
+defmodule SmolsqlsWeb.HomeLive do
+  @moduledoc """
+  Public landing page. A LiveView rather than a static controller page so the
+  header's region + live latency indicator connects over the socket for
+  unauthenticated visitors too. Renders the `PageHTML.home` template.
+  """
+  use SmolsqlsWeb, :live_view
 
-  def home(conn, _params) do
-    render(conn, :home, limits: platform_limits(), page_title: "Multitenant SQLite")
+  def mount(_params, _session, socket) do
+    {:ok,
+     socket
+     |> assign(:page_title, "Multitenant SQLite")
+     |> assign(:limits, platform_limits())}
   end
+
+  def handle_event("ping", _params, socket), do: {:reply, %{}, socket}
+
+  def render(assigns), do: SmolsqlsWeb.PageHTML.home(assigns)
 
   defp platform_limits do
     defaults = Smolsqls.Limits.defaults()

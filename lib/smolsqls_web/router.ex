@@ -28,7 +28,7 @@ defmodule SmolsqlsWeb.Router do
   scope "/", SmolsqlsWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live "/", HomeLive, :index
     post "/login", SessionController, :create
     post "/signup", SessionController, :signup
     post "/logout", SessionController, :delete

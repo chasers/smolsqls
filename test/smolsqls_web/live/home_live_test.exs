@@ -1,5 +1,7 @@
-defmodule SmolsqlsWeb.PageControllerTest do
+defmodule SmolsqlsWeb.HomeLiveTest do
   use SmolsqlsWeb.ConnCase
+
+  import Phoenix.LiveViewTest
 
   test "GET /", %{conn: conn} do
     conn = get(conn, ~p"/")
@@ -14,6 +16,11 @@ defmodule SmolsqlsWeb.PageControllerTest do
     assert response =~ "Database branching"
     assert response =~ "Point-in-time recovery"
     assert response =~ "30 days (litestream)"
+  end
+
+  test "mounts as a public LiveView carrying the region indicator", %{conn: conn} do
+    {:ok, _view, html} = live(conn, ~p"/")
+    assert html =~ ~s(id="region-latency")
   end
 
   test "serves a CSP whose script nonce matches the inline bootstrap script", %{conn: conn} do

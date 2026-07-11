@@ -1,6 +1,6 @@
 defmodule SmolsqlsWeb.PageHTML do
   @moduledoc """
-  This module contains pages rendered by PageController.
+  Templates for the public home page, rendered by `SmolsqlsWeb.HomeLive`.
 
   See the `page_html` directory for all templates available.
   """
