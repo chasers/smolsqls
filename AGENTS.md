@@ -20,7 +20,7 @@ Slop gates enforced by CI (don't disable them to get green — fix the code):
 
 - `credo --strict` runs the **ex_slop** plugin: 40 checks for LLM patterns (blanket rescues, narrator/obvious comments, anti-idiomatic `Enum`, N+1). Matches the "no explanatory comments" rule.
 - `ex_dna --max-clones 5` ratchets duplication — a new clone fails CI. When you legitimately remove clones, lower the number; never raise it to paper over a paste.
-- `reach.check --arch` enforces the layer/call policy in `.reach.exs`; `--smells --strict --baseline .reach.baseline.json` fails on *new* structural smells only. If you intentionally accept a new smell, regenerate the baseline with `mix reach.check --smells --write-baseline .reach.baseline.json` and commit it.
+- `reach.check --arch` enforces the layer/call policy in `.reach.exs`; `--smells --strict --baseline .reach.baseline.json` fails on *new* structural smells only. If you intentionally accept a new smell, regenerate the baseline with `mix reach.check --smells --write-baseline .reach.baseline.json`, reformat it (the task writes minified JSON) with `jq . .reach.baseline.json > tmp && mv tmp .reach.baseline.json`, and commit it — keep the checked-in baseline pretty-printed so diffs are reviewable.
 
 ### Phoenix v1.8 guidelines
 

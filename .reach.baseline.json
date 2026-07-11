@@ -1,1 +1,78 @@
-{"version":1,"tool":"reach","findings":[{"source":"smells","kind":"suboptimal","fingerprint":"sha256:f4b0d1045f74258a4b9204a4d1e2cd06dff5c712f1e1110cd6a740e707750b02","message":"`stamps` traversed 2 times (Enum.min, Enum.max); combine into a single Enum.reduce/3","file":"lib/smolsqls/data_plane/litestream.ex","line":114},{"source":"smells","kind":"behaviour_candidate","fingerprint":"sha256:86b03b749331c98de527ebec1a029417ab62ed63598c14cfa725364dff0a3057","message":"3 modules expose the same 4 public callbacks; consider extracting a behaviour if these modules are interchangeable implementations","file":"lib/smolsqls/object_store.ex","line":1},{"source":"smells","kind":"bare_rescue","fingerprint":"sha256:266788b507c29d5a23bfba2a24604f1271a037512430bb4d6c8647a37c2c536b","message":"bare rescue catches every exception type; rescue specific exception modules or use `exception in [...]`","file":"lib/smolsqls/telemetry.ex","line":122},{"source":"smells","kind":"fixed_shape_map","fingerprint":"sha256:6f316a9b840bba6eeefad39c0878361e865b19c3abce21bf128008c1b0a0716b","message":"map shape [:auth, :body, :method, :path, :returns] appears 8 times; consider a struct or explicit contract if it is domain data","file":"lib/smolsqls_web/controllers/api/index_controller.ex","line":34},{"source":"smells","kind":"fixed_shape_map","fingerprint":"sha256:7bf32fd0dd1c0016fa828d71439b20150bccb281a7f45b1b3483b6a554b57e2a","message":"map shape [:auth, :method, :path] appears 7 times; consider a struct or explicit contract if it is domain data","file":"lib/smolsqls_web/controllers/api/index_controller.ex","line":41},{"source":"smells","kind":"fixed_shape_map","fingerprint":"sha256:a3a0b861982db5bd13dc2614df982522720456d2028fcf3c1ad0492b9cd93698","message":"map shape [:auth, :method, :path, :returns] appears 7 times; consider a struct or explicit contract if it is domain data","file":"lib/smolsqls_web/controllers/api/index_controller.ex","line":49},{"source":"smells","kind":"suboptimal","fingerprint":"sha256:687446d7c44e44970933a3aef386709b785acbf3f5ea0837a4931f719f9a768b","message":"Enum.at/2 inside loop is O(n) per call; use pattern matching, Enum.with_index/1, or convert to tuple","file":"lib/smolsqls_web/hrana/stmt.ex","line":81},{"source":"smells","kind":"suboptimal","fingerprint":"sha256:687446d7c44e44970933a3aef386709b785acbf3f5ea0837a4931f719f9a768b","message":"Enum.at/2 inside loop is O(n) per call; use pattern matching, Enum.with_index/1, or convert to tuple","file":"lib/smolsqls_web/hrana/stmt.ex","line":84},{"source":"smells","kind":"fixed_shape_map","fingerprint":"sha256:af00d58b5d201ee1444bc98e4ead64bcee22cf6844a593f8245743509e13eabe","message":"map shape [:jsonPath, :name, :type] appears 7 times; consider a struct or explicit contract if it is domain data","file":"operator/lib/smolsqls_operator/api/v1alpha1/sqlite_node.ex","line":68}]}
+{
+  "version": 1,
+  "tool": "reach",
+  "findings": [
+    {
+      "source": "smells",
+      "kind": "suboptimal",
+      "fingerprint": "sha256:f4b0d1045f74258a4b9204a4d1e2cd06dff5c712f1e1110cd6a740e707750b02",
+      "message": "`stamps` traversed 2 times (Enum.min, Enum.max); combine into a single Enum.reduce/3",
+      "file": "lib/smolsqls/data_plane/litestream.ex",
+      "line": 114
+    },
+    {
+      "source": "smells",
+      "kind": "behaviour_candidate",
+      "fingerprint": "sha256:86b03b749331c98de527ebec1a029417ab62ed63598c14cfa725364dff0a3057",
+      "message": "3 modules expose the same 4 public callbacks; consider extracting a behaviour if these modules are interchangeable implementations",
+      "file": "lib/smolsqls/object_store.ex",
+      "line": 1
+    },
+    {
+      "source": "smells",
+      "kind": "bare_rescue",
+      "fingerprint": "sha256:266788b507c29d5a23bfba2a24604f1271a037512430bb4d6c8647a37c2c536b",
+      "message": "bare rescue catches every exception type; rescue specific exception modules or use `exception in [...]`",
+      "file": "lib/smolsqls/telemetry.ex",
+      "line": 122
+    },
+    {
+      "source": "smells",
+      "kind": "fixed_shape_map",
+      "fingerprint": "sha256:6f316a9b840bba6eeefad39c0878361e865b19c3abce21bf128008c1b0a0716b",
+      "message": "map shape [:auth, :body, :method, :path, :returns] appears 8 times; consider a struct or explicit contract if it is domain data",
+      "file": "lib/smolsqls_web/controllers/api/index_controller.ex",
+      "line": 34
+    },
+    {
+      "source": "smells",
+      "kind": "fixed_shape_map",
+      "fingerprint": "sha256:7bf32fd0dd1c0016fa828d71439b20150bccb281a7f45b1b3483b6a554b57e2a",
+      "message": "map shape [:auth, :method, :path] appears 7 times; consider a struct or explicit contract if it is domain data",
+      "file": "lib/smolsqls_web/controllers/api/index_controller.ex",
+      "line": 41
+    },
+    {
+      "source": "smells",
+      "kind": "fixed_shape_map",
+      "fingerprint": "sha256:a3a0b861982db5bd13dc2614df982522720456d2028fcf3c1ad0492b9cd93698",
+      "message": "map shape [:auth, :method, :path, :returns] appears 7 times; consider a struct or explicit contract if it is domain data",
+      "file": "lib/smolsqls_web/controllers/api/index_controller.ex",
+      "line": 49
+    },
+    {
+      "source": "smells",
+      "kind": "suboptimal",
+      "fingerprint": "sha256:687446d7c44e44970933a3aef386709b785acbf3f5ea0837a4931f719f9a768b",
+      "message": "Enum.at/2 inside loop is O(n) per call; use pattern matching, Enum.with_index/1, or convert to tuple",
+      "file": "lib/smolsqls_web/hrana/stmt.ex",
+      "line": 81
+    },
+    {
+      "source": "smells",
+      "kind": "suboptimal",
+      "fingerprint": "sha256:687446d7c44e44970933a3aef386709b785acbf3f5ea0837a4931f719f9a768b",
+      "message": "Enum.at/2 inside loop is O(n) per call; use pattern matching, Enum.with_index/1, or convert to tuple",
+      "file": "lib/smolsqls_web/hrana/stmt.ex",
+      "line": 84
+    },
+    {
+      "source": "smells",
+      "kind": "fixed_shape_map",
+      "fingerprint": "sha256:af00d58b5d201ee1444bc98e4ead64bcee22cf6844a593f8245743509e13eabe",
+      "message": "map shape [:jsonPath, :name, :type] appears 7 times; consider a struct or explicit contract if it is domain data",
+      "file": "operator/lib/smolsqls_operator/api/v1alpha1/sqlite_node.ex",
+      "line": 68
+    }
+  ]
+}
