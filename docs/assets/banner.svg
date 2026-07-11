@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" role="img" aria-label="smolsqls — millions of SQLite databases behind one REST API">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0c110f"/>
+      <stop offset="0.55" stop-color="#0e1512"/>
+      <stop offset="1" stop-color="#0f1e18"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f1fff9"/>
+      <stop offset="1" stop-color="#dbfaec"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#6ee7b7"/>
+      <stop offset="1" stop-color="#3ecf8e"/>
+    </linearGradient>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="360" fill="url(#bg)"/>
+  <circle cx="1060" cy="120" r="150" fill="#3ecf8e" opacity="0.12" filter="url(#soft)"/>
+  <circle cx="1160" cy="270" r="110" fill="#6ee7b7" opacity="0.08" filter="url(#soft)"/>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+    <text x="96" y="182" font-size="104" font-weight="700" letter-spacing="-4" fill="url(#ink)">smol<tspan fill="url(#accent)">sqls</tspan></text>
+    <text x="100" y="234" font-size="24" font-weight="500" fill="#bfe6d5">Millions of SQLite databases behind one API</text>
+    <text x="100" y="278" font-size="16.5" letter-spacing="0.4" fill="#7aa693">multitenant&#160;&#160;·&#160;&#160;globally clusterable&#160;&#160;·&#160;&#160;libSQL + HTTP&#160;&#160;·&#160;&#160;Elixir/Phoenix</text>
+  </g>
+
+  <g transform="translate(966 104)">
+    <g fill="#2c3d36">
+      <rect x="0"   y="0"   width="15" height="15" rx="4"/>
+      <rect x="34"  y="0"   width="15" height="15" rx="4"/>
+      <rect x="68"  y="0"   width="15" height="15" rx="4"/>
+      <rect x="102" y="0"   width="15" height="15" rx="4"/>
+      <rect x="136" y="0"   width="15" height="15" rx="4"/>
+      <rect x="170" y="0"   width="15" height="15" rx="4"/>
+      <rect x="0"   y="34"  width="15" height="15" rx="4"/>
+      <rect x="34"  y="34"  width="15" height="15" rx="4"/>
+      <rect x="102" y="34"  width="15" height="15" rx="4"/>
+      <rect x="136" y="34"  width="15" height="15" rx="4"/>
+      <rect x="170" y="34"  width="15" height="15" rx="4"/>
+      <rect x="0"   y="68"  width="15" height="15" rx="4"/>
+      <rect x="34"  y="68"  width="15" height="15" rx="4"/>
+      <rect x="68"  y="68"  width="15" height="15" rx="4"/>
+      <rect x="136" y="68"  width="15" height="15" rx="4"/>
+      <rect x="0"   y="102" width="15" height="15" rx="4"/>
+      <rect x="68"  y="102" width="15" height="15" rx="4"/>
+      <rect x="102" y="102" width="15" height="15" rx="4"/>
+      <rect x="170" y="102" width="15" height="15" rx="4"/>
+      <rect x="34"  y="136" width="15" height="15" rx="4"/>
+      <rect x="68"  y="136" width="15" height="15" rx="4"/>
+      <rect x="102" y="136" width="15" height="15" rx="4"/>
+      <rect x="170" y="136" width="15" height="15" rx="4"/>
+    </g>
+    <g fill="#3ecf8e">
+      <rect x="68"  y="34"  width="15" height="15" rx="4"/>
+      <rect x="34"  y="102" width="15" height="15" rx="4"/>
+      <rect x="136" y="102" width="15" height="15" rx="4"/>
+      <rect x="0"   y="136" width="15" height="15" rx="4"/>
+    </g>
+    <g fill="#a7f3d0">
+      <rect x="104" y="2"  width="15" height="15" rx="4"/>
+      <rect x="170" y="70" width="15" height="15" rx="4"/>
+    </g>
+  </g>
+
+  <rect x="0" y="356" width="1280" height="4" fill="url(#accent)"/>
+</svg>

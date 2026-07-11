@@ -1,225 +1,24 @@
 # smolsqls
 
-A multitenant, globally clusterable SQLite database service written in
-Elixir/Phoenix. Sign up for a tenant, create SQLite databases over a REST
-API (or a small LiveView UI), get a connection string back, and connect
-with any stock libSQL client or plain HTTP.
+<p align="center">
+  <img src="docs/assets/banner.svg" alt="smolsqls — millions of SQLite databases behind one API" width="100%">
+</p>
 
-## Architecture
+> Millions of SQLite databases behind one API — multitenant, globally
+> clusterable, and drivable entirely over HTTP.
 
-Built for ~1M databases per cluster across ~10 data-plane nodes.
+[![CI](https://github.com/chasers/smolsqls/actions/workflows/ci.yml/badge.svg)](https://github.com/chasers/smolsqls/actions/workflows/ci.yml)
+[![Elixir](https://img.shields.io/badge/elixir-~%3E%201.15-4B275F.svg)](https://elixir-lang.org)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+![Status](https://img.shields.io/badge/status-alpha-orange.svg)
 
-**Control plane** (Postgres-backed): tenants, databases, auth tokens, and
-placement decisions. Postgres is the source of truth for writes but never
-sits on the query path: every node keeps a **full ETS replica** of the
-request-path tables, bootstrapped with `COPY` at startup and kept current
-by streaming the WAL over a per-node permanent logical replication slot
-(`Postgrex.ReplicationConnection` + a minimal pgoutput decoder). Postgres
-downtime pauses create/delete; queries and auth keep working.
+Sign up for a tenant, create SQLite databases over a REST API (or a small
+LiveView UI), get a connection string back, and connect with any stock libSQL
+client or plain HTTP. No custom driver, no human steps in the loop — the whole
+lifecycle is a handful of `curl`s. Written in Elixir/Phoenix and built for ~1M
+databases per cluster across ~10 data-plane nodes.
 
-**Data plane**: one `Smolsqls.DataPlane.Database.Server` GenServer per
-database owns the single `exqlite` connection to that SQLite file (WAL
-mode) and serializes all writes. Servers activate **lazily on first
-query** and stay hot for a configurable idle TTL (default 1h), so boot is
-cold and traffic warms the set. Processes register in
-[`syn`](https://hex.pm/packages/syn) under the `:smolsqls_databases`
-scope, so every node knows which node owns which database; registration
-happens before the SQLite file is opened, which guarantees a single
-writer even under racing activations. Cross-node query traffic travels
-over [`gen_rpc`](https://hex.pm/packages/gen_rpc) — Erlang distribution
-carries only cluster membership, syn gossip, and
-[libcluster_postgres](https://github.com/supabase/libcluster_postgres)
-node discovery (LISTEN/NOTIFY on the metadb), never query payloads.
-On boot each node walks its data volume and claims any database whose
-file is local but whose record points elsewhere — the volume, not the
-node name, is the source of truth for placement.
-
-**Storage portability**: S3 is the source of truth for cold databases;
-node volumes are caches. When a database server idle-stops, it ships a
-`VACUUM INTO` snapshot to
-`idle-snapshots/<tenant>/<db>/latest.db` and bumps a
-`snapshot_generation` in the metadb. (Every session ships — skipping
-the upload for read-only sessions is deferred until statements can be
-classified by a real SQL parser rather than heuristics.) Objects are
-stored gzip-compressed, transparently and streaming in both directions
-(the S3 adapter compresses on ship and decompresses on restore, so
-callers only see logical files and memory stays bounded regardless of
-database size); reads fall back to raw for objects written before
-compression. Activation
-trusts placement + generation, never bare file
-presence: a cached file whose `<file>.generation` sidecar is behind
-the metadb is discarded and re-fetched, and a missing file restores
-via litestream replica (premium) → idle snapshot → latest manual
-backup. This makes placement free: draining a node is metadata-only
-for anything already shipped (`Smolsqls.Drain`, driven by the operator
-through the `node_drains` metadb table), and an optional LRU cache
-evictor (`CACHE_EVICTION_ENABLED` / `CACHE_HIGH_WATER_BYTES`) keeps
-volumes under a high-water mark by deleting cold, provably-shipped
-files.
-
-**Daily backups**: every database is guaranteed at least one backup a
-day. A cluster-singleton sweeper (`Smolsqls.Backups.Sweeper`, one node
-at a time via a Postgres advisory lock) finds databases whose newest
-backup is older than 24h and produces an `automatic` backup for each —
-promoting the existing idle snapshot with a server-side object-store
-copy for a cold database (no activation) and snapshotting the live
-writer for a hot one. These appear in the backups list alongside
-`manual` backups. This is a daily *artifact* floor, not point-in-time
-recovery; continuous durability for premium databases is litestream's
-job. Any backup can be **downloaded** as a plain SQLite file —
-`GET /v1/databases/:id/backups/:backup_id/download` (tenant api_key) or the
-dashboard's Download action — served straight from the object store
-(gunzipped), so no restore is needed to inspect one locally.
-
-**Branching**: fork any database into a new, independent one —
-`POST /v1/databases/:id/branch` or the dashboard's Branch action. A
-branch is a *physical copy*, not copy-on-write (every database is its
-own SQLite file), seeded **without touching the parent's writer** —
-bytes come from the object store, never the live connection. The source
-is either a **snapshot** (the parent's latest idle snapshot or a backup,
-server-side copied to the child's key — available to any database) or,
-for litestream-enabled databases, an exact **point in time** within the
-recoverable window (litestream restore to a `timestamp`; 30 days, backed
-by `LITESTREAM_RETENTION`). The child records its lineage
-(`source_database_id`, `branch_point_at`), gets its own default token,
-counts against the tenant's database limit (a branch *is* a database),
-and starts un-replicated by default. Branches can be **ephemeral**: set
-`expires_at` and a cluster-singleton sweeper (`Smolsqls.ExpirySweeper`)
-reaps them once past. A database with branches can't be deleted until
-its branches are gone (no cascade); the dashboard nests branches under
-their parent with a count.
-
-**Regions**: a database has a **primary region** — where its file lives and
-its writer runs — chosen at create time (`{"region": "gcp-us-central1"}`,
-defaulting to `DEFAULT_REGION`) and validated against the cluster's configured
-set (`REGIONS`). A region slug is a single hyphenated DNS label combining
-hosting provider and provider-native region (`gcp-us-central1`,
-`aws-us-east-1`); the provider is stored alongside as `cloud`. Placement
-constrains a database's owner to a live node in its region — each node
-publishes its own region to a `nodes` table on boot (`REGION`) — and rejects a
-create with `no_capacity_in_region` rather than silently placing it elsewhere.
-Branches inherit their source's region. The region system is dormant when
-`REGIONS` is empty (dev, single-cluster): databases carry no region and
-placement stays purely load-based.
-
-**Moving a database** to another region is a `PATCH /v1/databases/:id` with a
-new `region` (or the dashboard's Move action). The move ships the current
-state to the object store, marks the database `:moving` — a fence that makes
-every converged node refuse to activate its writer, so a stale read model
-can't revive it in the old region — then reassigns its placement to a node in
-the target region, which restores lazily. Queries racing the move get a
-retryable `database_relocating` (503). The fence is only as timely as the read
-model: the handling node updates synchronously, other region nodes converge
-over the WAL feed, so a query on a not-yet-converged node can still briefly
-reach the old owner (bounded by replication lag) — the same eventual-consistency
-window drains live with. Connection strings return a **global** host
-(`PHX_HOST`, e.g. `alpha.daisy.smolsqls.com`) that a global load balancer
-geo-routes to the nearest region — any node transparently proxies a query to
-the owner — plus a **regional** host that splices the region slug in as the
-second label (`alpha.gcp-us-central1.daisy.smolsqls.com`) to pin traffic to
-the owning region for debugging. (Multi-region deployment — per-region
-clusters, the global load balancer, and cross-region clustering — is in
-progress; the application, placement, and connection-string layers land
-first.)
-
-**Client access** — no custom client needed:
-
-- **libSQL / Hrana**: any stock libSQL client (`@libsql/client`, etc.)
-  connects with the `libsql://host:port?authToken=...` string returned
-  at creation time. The server speaks a Hrana v1/v2 subset over
-  WebSocket (`execute`, `batch`, `store_sql`, `named_args`,
-  `describe`, `sequence`); the auth token identifies the database.
-  Interactive transactions work on this transport: `BEGIN` takes a
-  writer lease owned by the connection, bounded by the
-  `txn_timeout_ms` limit and auto-rolled-back on disconnect; other
-  connections fail fast with a busy error until it ends.
-- **Hrana over HTTP**: `POST /v2/pipeline` and `POST /v3/pipeline`
-  (with `GET /v2` / `GET /v3` version probes) for `http://` / `https://`
-  libsql URLs, edge runtimes, and browser clients. Transactions work
-  within a single pipeline request — `BEGIN`/`COMMIT`/`ROLLBACK` and the
-  conditional batches libSQL clients emit run against one connection and
-  any transaction left open is rolled back at request end — but do not
-  persist across requests (batons unsupported). CORS is open (`*`) on
-  the token-authenticated API (bearer auth, no cookies), so browser
-  clients such as LibSQL Studio connect directly.
-- **Plain HTTP**: `POST /v1/databases/:id/query` with
-  `{"sql": "...", "args": [...]}` and the database auth token as a
-  Bearer token.
-
-**Tenant SQL is sandboxed** on the shared per-database connection. Every
-tenant statement runs under a SQLite authorizer that denies `ATTACH`,
-`DETACH`, and therefore `VACUUM` — closing cross-tenant and arbitrary
-host-file access (and `VACUUM INTO` writes). Native extension loading is
-explicitly disabled (`load_extension(...)` is rejected). The authorizer is
-scoped to tenant statements only; privileged snapshots (backups, idle ships)
-run `VACUUM INTO` through a separate unauthorized path
-(`Server.snapshot_into/3`). Two residual gaps remain, both confined to the
-tenant's own database (not cross-tenant escapes): tenant
-`PRAGMA max_page_count` (size-cap evasion for the hot session) and
-`PRAGMA writable_schema` (schema self-corruption). Robustly closing them needs
-`SQLITE_DBCONFIG_DEFENSIVE`/`SQLITE_LIMIT`, which exqlite's API does not yet
-expose.
-
-**Quotas & limits** are rows, not config: a `limits` map on `tenants`
-with per-database overrides on `databases`, falling back to cluster
-defaults (`config :smolsqls, Smolsqls.Limits`). Resolution is
-database → tenant → default, served from the read model. The set:
-`max_databases` (create time), `max_size_bytes`
-(`PRAGMA max_page_count` at activation), `rate_limit_rps` (per-node
-fixed window at the protocol edge), `query_timeout_ms`,
-`statement_timeout_ms` (server-side `sqlite3_interrupt` of runaway
-statements), `idle_ttl_ms`, and `max_hot_ms`. Resolved limits are
-exposed read-only on the database/tenant show endpoints; there is no
-public mutation path yet.
-
-**Token lifecycle**: credentials are managed rows, not columns on the
-owner. A database holds any number of permanent tokens
-(`/v1/databases/:id/tokens`) and a tenant any number of API keys
-(`/v1/tenant/keys`) — create (optionally with `expires_at`),
-enable/disable (`PATCH {enabled: false}`), and delete, each
-independently; revocation propagates immediately through the read
-model. Creating a database or tenant creates a `default` secret and
-returns it. At rest a secret is a SHA-256 hash (the auth lookup key)
-plus an AES-256-GCM ciphertext (`TOKEN_ENCRYPTION_KEY`, falling back
-to `SECRET_KEY_BASE`) — never plaintext, never logged. Secrets appear
-only in create responses and explicit `POST .../reveal` calls, which
-is also how the dashboard shows connection strings. The last usable
-tenant key cannot be disabled or deleted. List endpoints
-cursor-paginate with `?after=<id>&limit=<n>` and return a `next`
-cursor.
-
-**Unattended failover**: the operator watches each node's pod
-readiness and metadb replication-slot activity; when both say a node
-is gone for longer than `AUTO_EVACUATE_WINDOW_SECONDS`, it inserts an
-`evacuate` request on the same `node_drains` bus that drains use, and
-the data plane reassigns the dead node's placement rows to survivors
-(cancelled at claim time if the node reconnected). A returning node
-is fenced: servers still running for re-placed databases are stopped
-without shipping. Inter-node traffic can run over TLS (`GEN_RPC_TLS`
-for query traffic, `DIST_TLS` for membership; per-node certs, see
-`scripts/gen-dev-certs.sh`). Each node exposes Prometheus metrics at
-`GET /metrics` (cluster-internal; alert conditions in
-[`docs/alerts.md`](docs/alerts.md)).
-
-**Durability** is an infrastructure concern owned by the Kubernetes
-operator in [`operator/`](operator/): PVC-backed data directories,
-Litestream replication, and CRD-driven backup/restore. The control plane
-talks to it exclusively through the `Smolsqls.Infra` port by manipulating
-`SqliteDatabase` custom resources (`Smolsqls.Infra.Kubernetes`); dev and
-test use `Smolsqls.Infra.Local` (backups via `VACUUM INTO`).
-
-## Agent-friendly by design
-
-The full lifecycle is drivable over HTTP with no human steps. Every
-successful response is a JSON object `{"data": <object>}` (list
-endpoints add a top-level `next` cursor); errors are
-`{"error": {"code", "message"}}`, where `code` is a stable textual class
-(e.g. `not_found`, `object_storage_put`) and 5xx errors add a `request_id`
-for log correlation — raw internal detail is logged, never returned
-([full code list](docs/api-errors.md)). Secrets and connection strings
-(`api_key`, `auth_token`, `connections`) come back only in the create
-response and are never echoed by later reads — `GET /v1` documents the
-full contract.
+## Quick start
 
 ```sh
 # discover the API
@@ -241,7 +40,82 @@ curl -X POST http://localhost:4000/v1/databases/$DB_ID/query \
   -H "authorization: Bearer $DB_TOKEN" \
   -H 'content-type: application/json' \
   -d '{"sql": "SELECT 1"}'
+```
 
+Or connect with a stock libSQL client — nothing custom to install:
+
+```js
+import { createClient } from "@libsql/client";
+
+const client = createClient({
+  url: "ws://localhost:4000",
+  authToken: process.env.DB_TOKEN,
+});
+await client.execute("SELECT 1");
+```
+
+## Features
+
+- **Multitenant at scale** — millions of independent SQLite databases per
+  cluster; each is its own file with a single serialized writer.
+- **Connect with anything** — any stock libSQL client over WebSocket or HTTP
+  (Hrana v1/v2/v3), or plain `POST .../query` with a bearer token. Interactive
+  transactions, browser clients (CORS open), edge runtimes.
+- **Branching** — fork any database into a new, independent one from a snapshot
+  or an exact point in time (litestream-backed), without touching the parent's
+  writer. Branches can be ephemeral.
+- **Backups & restore** — a guaranteed daily backup floor plus on-demand
+  backups; download any backup as a plain `.db` file, restore in place.
+- **Regions** — each database has a primary region; a global host geo-routes to
+  the nearest one, and you can move a database between regions online.
+- **Sandboxed tenant SQL** — a SQLite authorizer denies `ATTACH`/`DETACH`/
+  `VACUUM` and extension loading, isolating tenants on the shared connection.
+- **Agent-friendly by design** — every response is `{"data": ...}`, every error
+  a stable `{"error": {"code", "message"}}`; `GET /v1` documents the full
+  contract. No dashboard step is ever required.
+
+## How it works
+
+The short version — see [`docs/architecture.md`](docs/architecture.md) for the
+full walk-through.
+
+- **Postgres is the source of truth, never on the query path.** Every node keeps
+  a full ETS replica of the request-path tables, kept live over a logical
+  replication slot. Postgres downtime pauses create/delete; queries keep working.
+- **One GenServer per database** owns the single `exqlite` connection, activates
+  lazily on first query, and stays hot for an idle TTL. `syn` guarantees a single
+  writer cluster-wide; cross-node queries travel over `gen_rpc`.
+- **The object store is the source of truth for cold databases**; node volumes
+  are just caches. Idle databases ship a compressed `VACUUM INTO` snapshot, so
+  draining or moving a node is mostly metadata.
+- **Placement is per-database and region-aware** — a global host geo-routes to
+  the owning region, and any node transparently proxies to the owner.
+- **Durability is owned by the Kubernetes operator** ([`operator/`](operator/)):
+  PVC-backed volumes, Litestream replication, CRD-driven backup/restore.
+- **Credentials, quotas, and limits are rows, not config** — managed token
+  lifecycle (hashed + encrypted at rest), row-based per-tenant/per-database
+  limits resolved from the read model.
+
+## Running locally
+
+Requires Erlang/OTP 27+, Elixir 1.20+, and Postgres on `localhost:5432`
+(`postgres`/`postgres`).
+
+```sh
+mix setup
+iex --sname smolsqls -S mix phx.server
+```
+
+The LiveView UI is at [`localhost:4000`](http://localhost:4000) — sign up or
+paste a tenant API key, then create/delete databases, reveal connection strings
+alongside ready-to-run curl and `@libsql/client` quickstart snippets, and trigger
+backups from the dashboard. The **API keys** page (`/account`) manages
+account-level tenant keys: create any number (optionally named), reveal, copy,
+enable/disable, and delete — new signups land here to copy their first key.
+
+### More lifecycle examples
+
+```sh
 # trigger / list backups, download one as a .db file, restore
 curl -X POST http://localhost:4000/v1/databases/$DB_ID/backups \
   -H "authorization: Bearer $API_KEY"
@@ -267,66 +141,34 @@ curl -X POST http://localhost:4000/v1/databases/$DB_ID/branch \
   -d '{"name": "task-db-pit", "timestamp": "2026-07-07T12:00:00Z"}'
 ```
 
-Or with a stock libSQL client:
-
-```js
-import { createClient } from "@libsql/client";
-
-const client = createClient({
-  url: "ws://localhost:4000",
-  authToken: process.env.DB_TOKEN,
-});
-await client.execute("SELECT 1");
-```
-
-## Running locally
-
-Requires Erlang/OTP 27+, Elixir 1.20+, and Postgres on `localhost:5432`
-(`postgres`/`postgres`).
-
-```sh
-mix setup
-iex --sname smolsqls -S mix phx.server
-```
-
-The LiveView UI is at [`localhost:4000`](http://localhost:4000) — sign
-up or paste a tenant API key, then create/delete databases, reveal
-connection strings alongside ready-to-run curl and `@libsql/client`
-quickstart snippets, and trigger backups from the dashboard. The
-**API keys** page (`/account`) manages account-level tenant keys:
-create any number (optionally named), reveal, copy, enable/disable, and
-delete — new signups land here to copy their first key.
-
 ## Deploying (Kubernetes)
 
 `deploy/` holds kustomize manifests: a 3-replica StatefulSet where pod
 `smolsqls-N` ↔ PVC `data-smolsqls-N` ↔ Erlang node name (the volume-claim
-identity model), each pod running a Litestream sidecar that databases
-are registered with dynamically over a control socket. A
-PodDisruptionBudget (`maxUnavailable: 1`) keeps voluntary disruptions
-(node drains/upgrades) from taking down more than one pod at a time,
-preserving quorum. The
-[operator](operator/) tracks one `SqliteNode` CR per data-plane node —
-never per database — reporting replication-slot health and database
-counts onto `kubectl get sqlitenodes`. Setting `spec.drain: true`
-inserts a request into the metadb's `node_drains` table; the data
-plane's drain worker claims it, idle-stops hot databases (shipping
-their snapshots), reassigns placement rows to the survivors, and the
-operator reports progress on `status.drain`. Re-draining a node
-requires deleting its `node_drains` row.
+identity model), each pod running a Litestream sidecar that databases are
+registered with dynamically over a control socket. A PodDisruptionBudget
+(`maxUnavailable: 1`) keeps voluntary disruptions (node drains/upgrades) from
+taking down more than one pod at a time, preserving quorum. The
+[operator](operator/) tracks one `SqliteNode` CR per data-plane node — never per
+database — reporting replication-slot health and database counts onto
+`kubectl get sqlitenodes`. Setting `spec.drain: true` inserts a request into the
+metadb's `node_drains` table; the data plane's drain worker claims it, idle-stops
+hot databases (shipping their snapshots), reassigns placement rows to the
+survivors, and the operator reports progress on `status.drain`. Re-draining a
+node requires deleting its `node_drains` row.
 
-**Multi-region** (in progress): nodes advertise their name over the shared
-metadb and connect by it, so cross-region clustering needs names that resolve
-and route from every region. A node defaults to its single-cluster headless
-DNS name; set `RELEASE_NODE_HOST` to a cross-cluster-routable host (e.g. a GKE
+**Multi-region** (in progress): nodes advertise their name over the shared metadb
+and connect by it, so cross-region clustering needs names that resolve and route
+from every region. A node defaults to its single-cluster headless DNS name; set
+`RELEASE_NODE_HOST` to a cross-cluster-routable host (e.g. a GKE
 Multi-Cluster-Services clusterset FQDN over a shared VPC) for a multi-region
 cluster. The application already proxies queries to a database's owning region
-over `gen_rpc`; the remaining work is the deploy topology (per-region clusters,
-a global load balancer) and hardening the single-writer guarantee against WAN
+over `gen_rpc`; the remaining work is the deploy topology (per-region clusters, a
+global load balancer) and hardening the single-writer guarantee against WAN
 partitions — tracked in the `regional-placement` plan.
 
-Local end-to-end cluster (kind + in-cluster Postgres with
-`wal_level=logical` + MinIO):
+Local end-to-end cluster (kind + in-cluster Postgres with `wal_level=logical` +
+MinIO):
 
 ```sh
 ./scripts/kind-up.sh
@@ -335,15 +177,15 @@ curl http://localhost:8080/v1
 
 `kubectl` here is scoped to the local `kind-smolsqls` cluster via
 [direnv](https://direnv.net): `.envrc` exports `KUBECONFIG=$PWD/.kube/config`, a
-gitignored single-context kubeconfig (run `direnv allow` once). Regenerate it
-with `mkdir -p .kube && kubectl config view --minify --flatten --context
-kind-smolsqls > .kube/config`.
+gitignored single-context kubeconfig (run `direnv allow` once). Regenerate it with
+`mkdir -p .kube && kubectl config view --minify --flatten --context kind-smolsqls
+> .kube/config`.
 
 The `FORCE_SSL` Docker build arg (default `true`) gates the compile-time
-`force_ssl` redirect; build with `--build-arg FORCE_SSL=false` when the
-endpoint sits behind a plain-HTTP load balancer. A full GCP/GKE deployment
-(Terraform + kustomize overlay for Cloud SQL, GCS, and Artifact Registry)
-lives in the sibling `smolsqls-deploy` repo.
+`force_ssl` redirect; build with `--build-arg FORCE_SSL=false` when the endpoint
+sits behind a plain-HTTP load balancer. A full GCP/GKE deployment (Terraform +
+kustomize overlay for Cloud SQL, GCS, and Artifact Registry) lives in the sibling
+`smolsqls-deploy` repo.
 
 ## Tests
 
@@ -352,18 +194,17 @@ mix test                        # unit + integration (needs Postgres)
 mix test --include distributed  # + multi-node syn/gen_rpc tests (needs epmd)
 ```
 
-The distributed tests boot a real peer BEAM node with `:peer`, place a
-database server on it, and assert that syn resolves it from the primary
-node and that queries round-trip over gen_rpc (on a distinct TCP port),
-including deregistration when the peer dies.
+The distributed tests boot a real peer BEAM node with `:peer`, place a database
+server on it, and assert that syn resolves it from the primary node and that
+queries round-trip over gen_rpc (on a distinct TCP port), including deregistration
+when the peer dies.
 
-`netsplit_test.exs` goes further: it boots the peer with its control
-channel on `:standard_io` (independent of Erlang distribution), so it can
-sever distribution between the nodes — a cookie mismatch plus
-`disconnect_node`, which also blocks reconnection — while still driving both
-sides with `:peer.call`. It uses that to drive `:syn` into a real registry
-conflict across a healed partition and assert the `SynHandler` resolves it to
-one deterministic surviving writer.
+`netsplit_test.exs` goes further: it boots the peer with its control channel on
+`:standard_io` (independent of Erlang distribution), so it can sever distribution
+between the nodes — a cookie mismatch plus `disconnect_node`, which also blocks
+reconnection — while still driving both sides with `:peer.call`. It uses that to
+drive `:syn` into a real registry conflict across a healed partition and assert
+the `SynHandler` resolves it to one deterministic surviving writer.
 
 ## Quality gate
 
@@ -373,17 +214,17 @@ mix ci         # non-mutating superset CI runs (no DB needed)
 ```
 
 `mix ci` is the merge gate: `hex.audit` (dependency CVEs) → compile
-(warnings-as-errors) → `deps.unlock --check-unused` → `format
---check-formatted` → `credo --strict` (with the [ExSlop](https://github.com/elixir-vibe/ex_slop)
-plugin's AI-slop checks) → `deps.audit` → `sobelow` (security scan,
-`.sobelow-conf` holds accepted skips) → `reach.check --arch`
-([Reach](https://github.com/elixir-vibe/reach) layer policy in `.reach.exs`:
-the data/control/read planes must not depend on the web layer). CI runs it as
-a fast, Postgres-free `checks` job in parallel with the test jobs; the
-`operator/` subproject has its own `mix ci` and test job.
+(warnings-as-errors) → `deps.unlock --check-unused` → `format --check-formatted` →
+`credo --strict` (with the [ExSlop](https://github.com/elixir-vibe/ex_slop)
+plugin's AI-slop checks) → `deps.audit` → `sobelow` (security scan, `.sobelow-conf`
+holds accepted skips) → `reach.check --arch`
+([Reach](https://github.com/elixir-vibe/reach) layer policy in `.reach.exs`: the
+data/control/read planes must not depend on the web layer). CI runs it as a fast,
+Postgres-free `checks` job in parallel with the test jobs; the `operator/`
+subproject has its own `mix ci` and test job.
 
-Two more checks run in their own CI jobs (not in `mix ci`, so the fast gate
-stays fast):
+Two more checks run in their own CI jobs (not in `mix ci`, so the fast gate stays
+fast):
 
 ```sh
 mix dialyzer   # type analysis; PLT cached in CI on {OTP, Elixir, mix.lock}
@@ -408,7 +249,18 @@ bench/                        # performance harnesses + RESULTS.md (qps, cold_st
 skills/                       # Claude Code skills (run skills/install.sh to link them in; see skills/README.md)
 ```
 
-Benchmarks live under `bench/<area>/` with a `RESULTS.md` per area. The
-query-path ones run locally via `mix run bench/<area>/*.exs`; the cluster
-ones (`bench/qps/kind_latency.sh`, `bench/cold_start/run.sh`) `kubectl exec`
-into a pod to measure against the real MinIO/S3 store and cross-pod topology.
+Benchmarks live under `bench/<area>/` with a `RESULTS.md` per area. The query-path
+ones run locally via `mix run bench/<area>/*.exs`; the cluster ones
+(`bench/qps/kind_latency.sh`, `bench/cold_start/run.sh`) `kubectl exec` into a pod
+to measure against the real MinIO/S3 store and cross-pod topology.
+
+## Architecture
+
+The one-screen version is [above](#how-it-works); the full walk-through — control
+plane, data plane, storage portability, backups, branching, regions, client
+transports, the tenant SQL sandbox, quotas, tokens, failover, and durability —
+lives in [`docs/architecture.md`](docs/architecture.md).
+
+## License
+
+[Apache License 2.0](LICENSE).
