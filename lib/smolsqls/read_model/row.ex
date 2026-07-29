@@ -3,11 +3,13 @@ defmodule Smolsqls.ReadModel.Row do
   Builds control-plane structs from the text-format column values the
   pgoutput feed produces.
 
-  Only the columns in `Smolsqls.ReadModel.Projection` are read — the same
-  set `Smolsqls.ReadModel.Source` selects — so a row built here is shaped
-  exactly like one loaded from Postgres on a cache miss. Non-projected
-  fields stay `nil` and must not be relied on;
-  `Smolsqls.ReadModel.ProjectionTest` fails if the two paths drift.
+  Every column `Smolsqls.ReadModel.CachedRow` keeps is decoded here, so a
+  row built from the feed is shaped exactly like one
+  `Smolsqls.ReadModel.Source` loads from Postgres.
+  `Smolsqls.ReadModel.CachedRowTest` fails if the two paths drift.
+
+  Credential ciphertexts are not decoded because they are not published;
+  they stay `nil`, which is the one field difference from a Postgres row.
   """
 
   alias Smolsqls.ControlPlane.{Database, DatabaseToken, Tenant, TenantApiKey}
@@ -17,6 +19,7 @@ defmodule Smolsqls.ReadModel.Row do
     %Database{
       id: Map.fetch!(values, "id"),
       tenant_id: Map.fetch!(values, "tenant_id"),
+      name: Map.get(values, "name"),
       status: status(Map.get(values, "status")),
       node: Map.get(values, "node"),
       region: Map.get(values, "region"),
@@ -24,7 +27,13 @@ defmodule Smolsqls.ReadModel.Row do
       file_path: Map.get(values, "file_path"),
       litestream_enabled: boolean(Map.get(values, "litestream_enabled")),
       snapshot_generation: integer(Map.get(values, "snapshot_generation")),
-      limits: map(Map.get(values, "limits"))
+      last_snapshot_at: datetime(Map.get(values, "last_snapshot_at")),
+      limits: map(Map.get(values, "limits")),
+      source_database_id: Map.get(values, "source_database_id"),
+      branch_point_at: datetime(Map.get(values, "branch_point_at")),
+      expires_at: datetime(Map.get(values, "expires_at")),
+      inserted_at: datetime(Map.get(values, "inserted_at")),
+      updated_at: datetime(Map.get(values, "updated_at"))
     }
   end
 
@@ -35,7 +44,8 @@ defmodule Smolsqls.ReadModel.Row do
       name: Map.get(values, "name"),
       slug: Map.get(values, "slug"),
       limits: map(Map.get(values, "limits")),
-      inserted_at: datetime(Map.get(values, "inserted_at"))
+      inserted_at: datetime(Map.get(values, "inserted_at")),
+      updated_at: datetime(Map.get(values, "updated_at"))
     }
   end
 
@@ -45,8 +55,11 @@ defmodule Smolsqls.ReadModel.Row do
       id: Map.get(values, "id"),
       database_id: Map.get(values, "database_id"),
       token_hash: Map.fetch!(values, "token_hash"),
+      name: Map.get(values, "name"),
       enabled: boolean(Map.get(values, "enabled")),
-      expires_at: datetime(Map.get(values, "expires_at"))
+      expires_at: datetime(Map.get(values, "expires_at")),
+      inserted_at: datetime(Map.get(values, "inserted_at")),
+      updated_at: datetime(Map.get(values, "updated_at"))
     }
   end
 
@@ -56,8 +69,11 @@ defmodule Smolsqls.ReadModel.Row do
       id: Map.get(values, "id"),
       tenant_id: Map.get(values, "tenant_id"),
       token_hash: Map.fetch!(values, "token_hash"),
+      name: Map.get(values, "name"),
       enabled: boolean(Map.get(values, "enabled")),
-      expires_at: datetime(Map.get(values, "expires_at"))
+      expires_at: datetime(Map.get(values, "expires_at")),
+      inserted_at: datetime(Map.get(values, "inserted_at")),
+      updated_at: datetime(Map.get(values, "updated_at"))
     }
   end
 

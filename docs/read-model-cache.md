@@ -16,51 +16,64 @@ every request in the fleet; caching the whole metadb on every node — the previ
 design — puts a copy of every row on every node whether it serves it or not.
 
 Measured on representative rows (`:erts_debug.flat_size/1`), a full replica cost
-about **2.2 GB per node at 1M databases** before index tables, and the four
-`DateTime` structs on a database row were most of a row's footprint while no
-query path read any of them.
+upwards of **2 GB per node at 1M databases** before index tables — paid by every
+node whether or not it served those databases, and rebuilt from scratch on every
+boot.
 
-So: hold **only the columns the query path reads**, and **only the rows this node
-has recently been asked for**. Memory then tracks a node's working set instead of
-the size of the fleet — roughly 43 MB for 50k active databases.
+So: hold **only the rows this node has recently been asked for**. Memory then
+tracks a node's working set instead of the size of the fleet — around 135 MB for
+50k active databases, against gigabytes for a full replica.
 
 ## What is cached
 
 Four ETS tables, keyed on what the request path looks up by:
 
-| table | key | columns |
+| table | key | contents |
 |---|---|---|
-| `databases` | `id` | `tenant_id`, `status`, `node`, `region`, `cloud`, `file_path`, `litestream_enabled`, `snapshot_generation`, `limits` |
-| `database_tokens` | `token_hash` | `id`, `database_id`, `enabled`, `expires_at` |
-| `tenant_api_keys` | `token_hash` | `id`, `tenant_id`, `enabled`, `expires_at` |
-| `tenants` | `id` | `name`, `slug`, `limits`, `inserted_at` |
+| `databases` | `id` | the whole row |
+| `tenants` | `id` | the whole row |
+| `database_tokens` | `token_hash` | the whole row except `token_ciphertext` |
+| `tenant_api_keys` | `token_hash` | the whole row except `token_ciphertext` |
 
-`Smolsqls.ReadModel.Projection` is the single list of those columns.
-`ReadModel.Source` selects them from Postgres on a miss, `ReadModel.Row` builds
-them from the WAL feed, and local write-through narrows the row it just wrote.
-All three must agree, so `Smolsqls.ReadModel.ProjectionTest` fails if any
-populates a field the others do not.
+**Rows are cached whole.** A cached row reads exactly like one loaded from
+Postgres, so no caller needs to know where its row came from. An earlier version
+of this cache held only the columns the query path read; it saved memory a
+working-set cache does not need to save, and charged every reader an invisible
+rule about which fields might be `nil`.
 
-`tenants` carries what management responses render (`name`, `slug`,
-`inserted_at`), not only the `limits` the query path needs, so management auth
-resolves a renderable tenant without a second lookup. Tenants are far fewer than
-databases, so the extra columns cost less than the read they save.
+The one exception is `token_ciphertext`. It decrypts to a live secret, nothing on
+a cached path reads it (`reveal` goes to Postgres), and caching it would leave
+the secret in ETS on every node that ever authenticated that token — and in any
+crash dump taken there. It is left out of the publication too, so it never enters
+the replication stream. `Smolsqls.ReadModel.CachedRow` owns that one exclusion.
 
-**Everything else on the struct is `nil` on purpose.** A cached row is *not*
-interchangeable with one loaded from Postgres and must never be written back —
-which is why `ControlPlane.mark_placed/3` takes an id and updates by query rather
-than accepting a struct.
+Cached rows are still **read-only**: an entry can be stale, so writes go to
+Postgres by id. That is why `ControlPlane.mark_placed/3` takes an id and updates
+by query — placement is written from the id alone and returns the fresh row, so a
+cached copy never becomes the basis of a write.
 
-Management auth (`tenant_api_keys` → `tenants`) is cached the same way. Under the
-previous full-replica design this would have meant a copy of every API key on
-every node to serve a path no query uses; with a working-set cache it costs only
-the keys actually in use, so a warm dashboard or API caller resolves without
-touching Postgres. It also gives management keys the same protection against
-repeated bogus credentials that database tokens get.
+Three paths populate an entry — a Postgres read on a miss (`ReadModel.Source`),
+the WAL feed (`ReadModel.Row`), and local write-through — and all three must
+produce the same shape, or a field would be `nil` depending on how a row happened
+to get cached. `Smolsqls.ReadModel.CachedRowTest` fails if they drift, and it
+fills every nullable column first: a row with `nil`s in it cannot detect a
+dropped column, because "not populated" and "populated with nothing" look
+identical.
 
-What it does **not** buy is management surviving an outage: those endpoints query
-Postgres for their own payloads — list, paginate, create — so they fail with it
-however auth resolved.
+### What it costs
+
+Measured with `:erts_debug.flat_size/1` on representative rows:
+
+| row | bytes | 50k entries | 250k entries (the default cap) |
+|---|---|---|---|
+| `databases` | ~1.6 KB | 77 MB | 385 MB |
+| credential row | ~1.0 KB | 48 MB | 242 MB |
+
+A realistic working set is the number that matters: ~135 MB across all four
+tables for 50k active databases, against ~1.6 GB for `databases` alone if every
+row in a 1M-database fleet were held. Whole rows are roughly 3× the old
+projection, so **size `max_entries` to the node** — at the default it bounds the
+four tables at about 1 GB combined, which is a ceiling, not a working figure.
 
 ## Reading
 
@@ -167,8 +180,10 @@ restarts was considered and rejected as mechanism not worth its weight.
 
 `ReadModel.Replication` streams the metadb WAL over a permanent per-node logical
 slot (`Postgrex.ReplicationConnection` plus a minimal pgoutput decoder), so LSN
-continuity survives reconnects. The publication carries only projected columns on
-Postgres 15+, and both credential tables use `REPLICA IDENTITY USING INDEX
+continuity survives reconnects. On Postgres 15+ the publication excludes the
+credential ciphertexts by column list, so a secret never enters the replication
+stream; below 15 (no column lists) they are published and dropped on apply
+instead. Both credential tables use `REPLICA IDENTITY USING INDEX
 <table>_token_hash_index` so a delete event carries the cache key — otherwise
 every node would need an id-to-hash index just to apply a revocation.
 

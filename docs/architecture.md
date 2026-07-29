@@ -47,9 +47,8 @@ flowchart TB
 Postgres-backed: tenants, databases, auth tokens, and placement decisions.
 Postgres is the source of truth for writes but rarely sits on the query path:
 each node keeps a **bounded cache** (`Smolsqls.ReadModel`) of the request-path
-rows in ETS — only the columns the query path reads, and only the rows that node
-has recently been asked for, so memory scales with its working set instead of the
-size of the fleet. A hit is one ETS lookup and never writes; a miss reads one row
+rows in ETS — whole rows, but only the ones that node has recently been asked
+for, so memory scales with its working set instead of the size of the fleet. A hit is one ETS lookup and never writes; a miss reads one row
 from Postgres; changes made on other nodes arrive over a per-node permanent
 logical replication slot and update rows a node already holds without ever
 populating new ones.
@@ -60,7 +59,7 @@ anything resembling an auth failure. Management auth is cached too, but the
 management API and dashboard still fail with Postgres — their endpoints query it
 for their own payloads.
 
-Full details — projection, refresh-ahead, negative caching, eviction, the
+Full details — refresh-ahead, negative caching, eviction, the
 mutation-during-load race, and the metrics to alert on — are in
 [read-model-cache.md](read-model-cache.md).
 

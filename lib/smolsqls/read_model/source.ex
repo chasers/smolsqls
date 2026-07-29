@@ -1,13 +1,12 @@
 defmodule Smolsqls.ReadModel.Source do
   @moduledoc """
-  Postgres side of the read-model cache: the projected single-row read
-  behind a cache miss or a refresh.
+  Postgres side of the read-model cache: the single-row read behind a
+  cache miss or a refresh.
 
-  Every read selects only the columns the query path uses, so a row
-  loaded here is shaped exactly like one the WAL feed builds through
-  `Smolsqls.ReadModel.Row` — non-projected fields are `nil` on both
-  paths, and nothing downstream can quietly come to depend on one of
-  them being populated.
+  Every read selects the columns in `Smolsqls.ReadModel.CachedRow` — the
+  whole row minus credential ciphertexts — so a row loaded here is shaped
+  exactly like one the WAL feed builds through `Smolsqls.ReadModel.Row`,
+  and both read like a row loaded straight from Postgres.
 
   An unreachable metadb is reported as `{:error, :metadb_unavailable}`
   rather than raised, so a cache miss during an outage can answer with a
@@ -19,7 +18,7 @@ defmodule Smolsqls.ReadModel.Source do
   require Logger
 
   alias Smolsqls.ControlPlane.{Database, DatabaseToken, Tenant, TenantApiKey}
-  alias Smolsqls.ReadModel.Projection
+  alias Smolsqls.ReadModel.CachedRow
   alias Smolsqls.Repo
 
   @type result :: {:ok, struct()} | {:error, :not_found} | {:error, :metadb_unavailable}
@@ -69,7 +68,7 @@ defmodule Smolsqls.ReadModel.Source do
   end
 
   defp one_by(schema, table, key_field, key) do
-    fields = Projection.fields(table)
+    fields = CachedRow.fields(schema, table)
 
     from(row in schema,
       where: field(row, ^key_field) == ^key,

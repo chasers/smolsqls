@@ -45,18 +45,18 @@ defmodule Smolsqls.ReadModel do
   before a delete would otherwise reinsert the row and hold it for a
   full TTL.
 
-  Rows carry only projected fields (`Smolsqls.ReadModel.Projection`);
-  everything else on the struct is `nil` on purpose, including on the
-  write-through path, which narrows the row it just wrote so all three
-  populate paths agree. A read-model row is **not** interchangeable with
-  one loaded from Postgres and must never be written back.
+  A cached row carries every column the schema has, minus credential
+  ciphertexts (`Smolsqls.ReadModel.CachedRow`), so it reads exactly like
+  one loaded from Postgres and no caller needs to know where it came
+  from. It is still read-only: an entry can be stale, so writes go to
+  Postgres by id rather than re-writing a whole row from cache.
   """
 
   use GenServer
 
   require Logger
 
-  alias Smolsqls.ReadModel.{Projection, Source}
+  alias Smolsqls.ReadModel.{CachedRow, Source}
   alias Smolsqls.Telemetry
 
   @databases __MODULE__.Databases
@@ -156,7 +156,7 @@ defmodule Smolsqls.ReadModel do
   """
   @spec put(table(), struct()) :: :ok
   def put(table, row) do
-    call_owner({:put, table, key_for(table, row), Projection.project(table, row)})
+    call_owner({:put, table, key_for(table, row), CachedRow.narrow(table, row)})
   end
 
   @doc """
@@ -167,7 +167,7 @@ defmodule Smolsqls.ReadModel do
   """
   @spec replace_if_cached(table(), struct()) :: :ok
   def replace_if_cached(table, row) do
-    call_owner({:replace_if_cached, table, key_for(table, row), Projection.project(table, row)})
+    call_owner({:replace_if_cached, table, key_for(table, row), CachedRow.narrow(table, row)})
   end
 
   @doc """

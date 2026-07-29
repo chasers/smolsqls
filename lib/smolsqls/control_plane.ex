@@ -588,9 +588,9 @@ defmodule Smolsqls.ControlPlane do
   Records that a database is now active on `node` at `file_path`.
 
   Takes an id rather than a struct on purpose: the caller reached here
-  from a query-path lookup, so its row is a projected read-model row
-  whose non-projected fields are `nil`. Updating by query keeps a
-  partial row from having any route back into Postgres.
+  from a cache lookup, and a cached row can be stale. Updating by query
+  writes placement from the id alone and returns the fresh row, so a
+  cached copy never becomes the basis of a write.
   """
   @spec mark_placed(String.t(), node(), Path.t()) ::
           {:ok, Database.t()} | {:error, :not_found}
