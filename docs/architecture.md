@@ -5,6 +5,43 @@ one-screen version; this is the deep dive.
 
 Built for ~1M databases per cluster across ~10 data-plane nodes.
 
+## System overview
+
+```mermaid
+flowchart TB
+    Clients["Clients\nlibSQL / Hrana (WebSocket) · Hrana (HTTP) · plain HTTP"]
+    GLB["Global load balancer\ngeo-routes to the nearest region"]
+
+    Clients --> GLB
+    GLB --> RegionA
+    GLB --> RegionB
+
+    subgraph RegionA["Kubernetes cluster — gcp-us-central1"]
+        subgraph SSA["StatefulSet (pod ↔ ordinal ↔ PVC)"]
+            subgraph PodA["Pod smolsqls-0"]
+                NodeA["Elixir node"]
+                LSA["litestream\none process per pod, driven by\nElixir over its control socket"]
+            end
+            PodA2["Pod smolsqls-1 …"]
+        end
+        NodeA <-. "Erlang cluster" .-> PodA2
+    end
+
+    subgraph RegionB["Kubernetes cluster — aws-us-east-1"]
+        PodsB["Pods …"]
+    end
+
+    RegionA <== "Erlang distribution across clusters;\nqueries routed over partitioned\ngen_rpc connections" ==> RegionB
+
+    PG[("Postgres metadb")]
+    S3[("S3\nbackups · idle snapshots · litestream replicas")]
+
+    RegionA --- PG
+    RegionB --- PG
+    LSA --> S3
+    NodeA --> S3
+```
+
 ## Control plane
 
 Postgres-backed: tenants, databases, auth tokens, and placement decisions.
