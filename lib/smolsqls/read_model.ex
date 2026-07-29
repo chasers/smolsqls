@@ -1,11 +1,11 @@
 defmodule Smolsqls.ReadModel do
   @moduledoc """
   Bounded read-through cache over the request-path metadb tables
-  (`databases`, `database_tokens`, `tenants`), holding only the columns
-  the query path reads and only the rows it has recently asked for. So
-  memory scales with this node's working set rather than with the size
-  of the fleet, and a query for a recently-active database is served
-  while Postgres is unreachable.
+  (`databases`, `database_tokens`, `tenant_api_keys`, `tenants`), holding
+  only the columns the request path reads and only the rows it has
+  recently asked for. So memory scales with this node's working set
+  rather than with the size of the fleet, and a query for a
+  recently-active database is served while Postgres is unreachable.
 
   Postgres remains the source of truth. Entries arrive three ways: a
   read-through load on a miss, write-through from a local control-plane
@@ -45,24 +45,31 @@ defmodule Smolsqls.ReadModel do
   before a delete would otherwise reinsert the row and hold it for a
   full TTL.
 
-  Rows carry only projected fields (see `Smolsqls.ReadModel.Source` and
-  `Smolsqls.ReadModel.Row`); everything else on the struct is `nil` on
-  purpose. A read-model row is **not** interchangeable with one loaded
-  from Postgres and must never be written back.
+  Rows carry only projected fields (`Smolsqls.ReadModel.Projection`);
+  everything else on the struct is `nil` on purpose, including on the
+  write-through path, which narrows the row it just wrote so all three
+  populate paths agree. A read-model row is **not** interchangeable with
+  one loaded from Postgres and must never be written back.
   """
 
   use GenServer
 
   require Logger
 
-  alias Smolsqls.ReadModel.Source
+  alias Smolsqls.ReadModel.{Projection, Source}
   alias Smolsqls.Telemetry
 
   @databases __MODULE__.Databases
   @database_tokens __MODULE__.DatabaseTokens
+  @tenant_api_keys __MODULE__.TenantApiKeys
   @tenants __MODULE__.Tenants
 
-  @tables %{databases: @databases, database_tokens: @database_tokens, tenants: @tenants}
+  @tables %{
+    databases: @databases,
+    database_tokens: @database_tokens,
+    tenant_api_keys: @tenant_api_keys,
+    tenants: @tenants
+  }
 
   @counter_names [
     :hits,
@@ -90,7 +97,7 @@ defmodule Smolsqls.ReadModel do
     load_timeout_ms: :timer.seconds(15)
   }
 
-  @type table :: :databases | :database_tokens | :tenants
+  @type table :: :databases | :database_tokens | :tenant_api_keys | :tenants
   @type entry :: {:ok, struct()} | :missing
   @type result :: {:ok, struct()} | {:error, :not_found} | {:error, :metadb_unavailable}
 
@@ -148,7 +155,9 @@ defmodule Smolsqls.ReadModel do
   the control-plane mutation rate.
   """
   @spec put(table(), struct()) :: :ok
-  def put(table, row), do: call_owner({:put, table, key_for(table, row), row})
+  def put(table, row) do
+    call_owner({:put, table, key_for(table, row), Projection.project(table, row)})
+  end
 
   @doc """
   WAL feed apply: replaces the row only if this node already holds an
@@ -158,7 +167,7 @@ defmodule Smolsqls.ReadModel do
   """
   @spec replace_if_cached(table(), struct()) :: :ok
   def replace_if_cached(table, row) do
-    call_owner({:replace_if_cached, table, key_for(table, row), row})
+    call_owner({:replace_if_cached, table, key_for(table, row), Projection.project(table, row)})
   end
 
   @doc """
@@ -603,7 +612,10 @@ defmodule Smolsqls.ReadModel do
     Application.get_env(:smolsqls, __MODULE__, []) |> Keyword.delete(:enabled)
   end
 
-  defp key_for(:database_tokens, %{token_hash: token_hash}), do: token_hash
+  defp key_for(table, %{token_hash: token_hash})
+       when table in [:database_tokens, :tenant_api_keys],
+       do: token_hash
+
   defp key_for(_table, %{id: id}), do: id
 
   defp table!(table), do: Map.fetch!(@tables, table)

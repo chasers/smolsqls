@@ -155,24 +155,49 @@ defmodule Smolsqls.ReadModel.Replication do
   end
 
   defp apply_event({:delete, "database_tokens", _values}, state) do
-    Logger.warning(
-      "database_tokens delete arrived without token_hash; " <>
-        "REPLICA IDENTITY USING INDEX database_tokens_token_hash_index is required. " <>
-        "Dropping cached tokens to stay correct."
-    )
-
+    warn_missing_hash("database_tokens")
     ReadModel.truncate(:database_tokens)
     state
   end
 
+  defp apply_event({change, "tenant_api_keys", values}, state)
+       when change in [:insert, :update] do
+    ReadModel.replace_if_cached(:tenant_api_keys, Row.build_tenant_api_key(values))
+    state
+  end
+
+  defp apply_event({:delete, "tenant_api_keys", %{"token_hash" => hash}}, state)
+       when is_binary(hash) do
+    ReadModel.delete(:tenant_api_keys, hash)
+    state
+  end
+
+  defp apply_event({:delete, "tenant_api_keys", _values}, state) do
+    warn_missing_hash("tenant_api_keys")
+    ReadModel.truncate(:tenant_api_keys)
+    state
+  end
+
   defp apply_event({:truncate, names}, state) do
-    if "databases" in names, do: ReadModel.truncate(:databases)
-    if "tenants" in names, do: ReadModel.truncate(:tenants)
-    if "database_tokens" in names, do: ReadModel.truncate(:database_tokens)
+    for name <- names, table = cache_table(name), do: ReadModel.truncate(table)
     state
   end
 
   defp apply_event(_event, state), do: state
+
+  defp cache_table("databases"), do: :databases
+  defp cache_table("tenants"), do: :tenants
+  defp cache_table("database_tokens"), do: :database_tokens
+  defp cache_table("tenant_api_keys"), do: :tenant_api_keys
+  defp cache_table(_other), do: nil
+
+  defp warn_missing_hash(table) do
+    Logger.warning(
+      "#{table} delete arrived without token_hash; " <>
+        "REPLICA IDENTITY USING INDEX #{table}_token_hash_index is required. " <>
+        "Dropping cached rows to stay correct."
+    )
+  end
 
   defp standby_status(lsn) do
     <<?r, lsn + 1::64, lsn + 1::64, lsn + 1::64, current_time()::64, 0>>

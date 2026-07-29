@@ -14,10 +14,12 @@ defmodule Smolsqls.ControlPlane do
   miss during an outage, which callers must surface as retryable rather
   than as an auth failure.
 
-  Management-path reads, `authenticate_tenant/1` included, go straight
-  to Postgres and fail with it. Writes go to Postgres (the source of
-  truth) and are applied to the local cache immediately; other nodes
-  converge over the WAL feed.
+  `authenticate_tenant/1` is cached the same way, so the dashboard and
+  management API resolve a caller without reading Postgres. The requests
+  behind that auth still query Postgres for their payloads, so they fail
+  with it regardless. Writes go to Postgres (the source of truth) and are
+  applied to the local cache immediately; other nodes converge over the
+  WAL feed.
 
   Credentials are managed rows, not columns: `database_tokens` and
   `tenant_api_keys` hold any number of permanent secrets per owner,
@@ -32,7 +34,6 @@ defmodule Smolsqls.ControlPlane do
   alias Smolsqls.ControlPlane.{Database, DatabaseToken, Tenant, TenantApiKey}
   alias Smolsqls.ControlPlane.Node, as: NodeRow
   alias Smolsqls.ReadModel
-  alias Smolsqls.ReadModel.Source
   alias Smolsqls.Repo
 
   @doc """
@@ -65,6 +66,7 @@ defmodule Smolsqls.ControlPlane do
         {:ok, {tenant, api_key}} ->
           record_signup(signup_ip)
           write_through({:ok, tenant}, &ReadModel.put(:tenants, &1))
+          write_through({:ok, api_key}, &ReadModel.put(:tenant_api_keys, &1))
           {:ok, %{tenant | api_key: api_key.token}}
 
         {:error, changeset} ->
@@ -92,25 +94,24 @@ defmodule Smolsqls.ControlPlane do
   def get_tenant_by_slug(slug), do: Repo.get_by(Tenant, slug: slug)
 
   @doc """
-  Management-path authentication. Reads Postgres on every request —
-  tenant API keys are deliberately not cached, since nothing on the
-  query path authenticates with one — so the dashboard and the
-  management API fail while the metadb is down.
+  Management-path authentication, served from the cache like the query
+  path. The tenant it returns carries the fields management responses
+  render, so a warm caller costs no Postgres reads — though the request
+  behind it still queries Postgres for its own payload.
   """
   @spec authenticate_tenant(String.t()) ::
           {:ok, Tenant.t()} | {:error, :unauthorized | :metadb_unavailable}
   def authenticate_tenant(api_key) when is_binary(api_key) do
     hash = Smolsqls.Secrets.hash(api_key)
 
-    Source.guard(fn ->
-      with %TenantApiKey{} = key <- Repo.get_by(TenantApiKey, token_hash: hash),
-           true <- token_usable?(key),
-           %Tenant{} = tenant <- Repo.get(Tenant, key.tenant_id) do
-        {:ok, tenant}
-      else
-        _ -> {:error, :unauthorized}
-      end
-    end)
+    with {:ok, %TenantApiKey{} = key} <- ReadModel.fetch(:tenant_api_keys, hash),
+         true <- token_usable?(key),
+         {:ok, %Tenant{} = tenant} <- ReadModel.fetch(:tenants, key.tenant_id) do
+      {:ok, tenant}
+    else
+      {:error, :metadb_unavailable} -> {:error, :metadb_unavailable}
+      _ -> {:error, :unauthorized}
+    end
   end
 
   @doc """
@@ -160,6 +161,7 @@ defmodule Smolsqls.ControlPlane do
     %TenantApiKey{tenant_id: tenant.id}
     |> TenantApiKey.create_changeset(attrs)
     |> Repo.insert()
+    |> write_through(&ReadModel.put(:tenant_api_keys, &1))
   end
 
   @spec update_tenant_api_key(TenantApiKey.t(), map()) ::
@@ -173,6 +175,7 @@ defmodule Smolsqls.ControlPlane do
       key
       |> TenantApiKey.update_changeset(attrs)
       |> Repo.update()
+      |> write_through(&ReadModel.put(:tenant_api_keys, &1))
     end
   end
 
@@ -184,6 +187,7 @@ defmodule Smolsqls.ControlPlane do
     else
       key
       |> Repo.delete()
+      |> write_through(&ReadModel.delete_row(:tenant_api_keys, &1))
     end
   end
 

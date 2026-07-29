@@ -26,28 +26,41 @@ the size of the fleet — roughly 43 MB for 50k active databases.
 
 ## What is cached
 
-Three ETS tables, keyed on what the query path looks up by:
+Four ETS tables, keyed on what the request path looks up by:
 
 | table | key | columns |
 |---|---|---|
 | `databases` | `id` | `tenant_id`, `status`, `node`, `region`, `cloud`, `file_path`, `litestream_enabled`, `snapshot_generation`, `limits` |
 | `database_tokens` | `token_hash` | `id`, `database_id`, `enabled`, `expires_at` |
-| `tenants` | `id` | `limits` |
+| `tenant_api_keys` | `token_hash` | `id`, `tenant_id`, `enabled`, `expires_at` |
+| `tenants` | `id` | `name`, `slug`, `limits`, `inserted_at` |
 
 `Smolsqls.ReadModel.Projection` is the single list of those columns.
-`ReadModel.Source` selects them from Postgres on a miss; `ReadModel.Row` builds
-them from the WAL feed. Both paths must agree, so
-`Smolsqls.ReadModel.ProjectionTest` fails if either populates a field the other
-does not.
+`ReadModel.Source` selects them from Postgres on a miss, `ReadModel.Row` builds
+them from the WAL feed, and local write-through narrows the row it just wrote.
+All three must agree, so `Smolsqls.ReadModel.ProjectionTest` fails if any
+populates a field the others do not.
+
+`tenants` carries what management responses render (`name`, `slug`,
+`inserted_at`), not only the `limits` the query path needs, so management auth
+resolves a renderable tenant without a second lookup. Tenants are far fewer than
+databases, so the extra columns cost less than the read they save.
 
 **Everything else on the struct is `nil` on purpose.** A cached row is *not*
 interchangeable with one loaded from Postgres and must never be written back —
 which is why `ControlPlane.mark_placed/3` takes an id and updates by query rather
 than accepting a struct.
 
-`tenant_api_keys` is deliberately **not** cached: nothing on the query path
-authenticates with one, so management auth reads Postgres on every request and
-fails with it.
+Management auth (`tenant_api_keys` → `tenants`) is cached the same way. Under the
+previous full-replica design this would have meant a copy of every API key on
+every node to serve a path no query uses; with a working-set cache it costs only
+the keys actually in use, so a warm dashboard or API caller resolves without
+touching Postgres. It also gives management keys the same protection against
+repeated bogus credentials that database tokens get.
+
+What it does **not** buy is management surviving an outage: those endpoints query
+Postgres for their own payloads — list, paginate, create — so they fail with it
+however auth resolved.
 
 ## Reading
 
@@ -136,7 +149,8 @@ sweep so a node with no traffic still notices the metadb coming back.
 | query, database used in the last 24h | ✅ | ✅ served from cache; failed refreshes ignored, expiry paused |
 | query, cold database | ✅ (one extra read) | ❌ retryable 503 `metadb_unavailable` |
 | any query, first request after a deploy | ✅ | ❌ the cache starts empty |
-| management API, dashboard | ✅ | ❌ by design |
+| management auth | ✅ (cached) | ✅ resolves, but see below |
+| management API, dashboard | ✅ | ❌ the endpoint's own queries hit Postgres |
 
 **A miss during an outage is a retryable 503, never a 401.** A transient outage
 must not read to a client as a revoked token, so `{:error, :metadb_unavailable}`
@@ -154,9 +168,9 @@ restarts was considered and rejected as mechanism not worth its weight.
 `ReadModel.Replication` streams the metadb WAL over a permanent per-node logical
 slot (`Postgrex.ReplicationConnection` plus a minimal pgoutput decoder), so LSN
 continuity survives reconnects. The publication carries only projected columns on
-Postgres 15+, and `database_tokens` uses `REPLICA IDENTITY USING INDEX
-database_tokens_token_hash_index` so a delete event carries the cache key —
-otherwise every node would need an id-to-hash index just to apply a revocation.
+Postgres 15+, and both credential tables use `REPLICA IDENTITY USING INDEX
+<table>_token_hash_index` so a delete event carries the cache key — otherwise
+every node would need an id-to-hash index just to apply a revocation.
 
 If Postgres reports the slot missing or invalidated, the WAL it needed is gone
 and deletes have been lost, so the cache is **flushed** and the slot recreated.

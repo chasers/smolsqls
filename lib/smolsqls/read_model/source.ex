@@ -18,7 +18,7 @@ defmodule Smolsqls.ReadModel.Source do
 
   require Logger
 
-  alias Smolsqls.ControlPlane.{Database, DatabaseToken, Tenant}
+  alias Smolsqls.ControlPlane.{Database, DatabaseToken, Tenant, TenantApiKey}
   alias Smolsqls.ReadModel.Projection
   alias Smolsqls.Repo
 
@@ -35,7 +35,9 @@ defmodule Smolsqls.ReadModel.Source do
   storing a negative entry for garbage a client made up.
   """
   @spec valid_key?(Smolsqls.ReadModel.table(), term()) :: boolean()
-  def valid_key?(:database_tokens, key), do: is_binary(key)
+  def valid_key?(table, key) when table in [:database_tokens, :tenant_api_keys],
+    do: is_binary(key)
+
   def valid_key?(_table, key), do: is_binary(key) and match?({:ok, _}, Ecto.UUID.cast(key))
 
   @doc """
@@ -60,6 +62,10 @@ defmodule Smolsqls.ReadModel.Source do
 
   defp do_fetch(:database_tokens, token_hash) do
     one_by(DatabaseToken, :database_tokens, :token_hash, token_hash)
+  end
+
+  defp do_fetch(:tenant_api_keys, token_hash) do
+    one_by(TenantApiKey, :tenant_api_keys, :token_hash, token_hash)
   end
 
   defp one_by(schema, table, key_field, key) do

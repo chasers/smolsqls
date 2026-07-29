@@ -9,11 +9,16 @@ defmodule Smolsqls.ReadModel.ReplicationTest do
   What the feed must and must not do: it updates and deletes rows this
   node already holds, and it never populates one it does not — otherwise
   the cache grows back into the full replica this design replaced.
+
+  The slot is dropped before the feed starts, so it begins at the current
+  WAL position: a slot left behind by an earlier run would resume from its
+  old position and make this test wait out every write the suite has made
+  since.
   """
 
   use ExUnit.Case, async: false
 
-  alias Smolsqls.ControlPlane.{Database, DatabaseToken}
+  alias Smolsqls.ControlPlane.{Database, DatabaseToken, TenantApiKey}
   alias Smolsqls.ReadModel
   alias Smolsqls.Wait
 
@@ -30,6 +35,8 @@ defmodule Smolsqls.ReadModel.ReplicationTest do
     tenant_id = Ecto.UUID.generate()
     database_id = Ecto.UUID.generate()
 
+    drop_slot(conn)
+
     on_exit(fn ->
       cleanup = start_raw_conn!()
 
@@ -41,12 +48,7 @@ defmodule Smolsqls.ReadModel.ReplicationTest do
         Ecto.UUID.dump!(tenant_id)
       ])
 
-      Postgrex.query!(
-        cleanup,
-        "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = $1",
-        [Smolsqls.ReadModel.Replication.slot_name()]
-      )
-
+      drop_slot(cleanup)
       GenServer.stop(cleanup)
     end)
 
@@ -106,6 +108,37 @@ defmodule Smolsqls.ReadModel.ReplicationTest do
     Wait.until(fn -> ReadModel.peek(:database_tokens, token_hash) == :missing end)
   end
 
+  test "a tenant api key revoked on another node converges and then drops",
+       %{conn: conn, tenant_id: tenant_id} do
+    api_key = "sk_repl_#{System.unique_integer([:positive])}"
+    key_hash = Smolsqls.Secrets.hash(api_key)
+
+    insert_tenant(conn, tenant_id)
+    insert_api_key(conn, tenant_id, api_key, key_hash)
+
+    :ok =
+      ReadModel.put(:tenant_api_keys, %TenantApiKey{
+        id: Ecto.UUID.generate(),
+        tenant_id: tenant_id,
+        token_hash: key_hash,
+        enabled: true
+      })
+
+    Postgrex.query!(
+      conn,
+      "UPDATE tenant_api_keys SET enabled = false, updated_at = now() WHERE token_hash = $1",
+      [key_hash]
+    )
+
+    Wait.until(fn ->
+      match?({:ok, %{enabled: false}}, ReadModel.peek(:tenant_api_keys, key_hash))
+    end)
+
+    Postgrex.query!(conn, "DELETE FROM tenant_api_keys WHERE token_hash = $1", [key_hash])
+
+    Wait.until(fn -> ReadModel.peek(:tenant_api_keys, key_hash) == :missing end)
+  end
+
   defp insert_tenant(conn, tenant_id) do
     Postgrex.query!(
       conn,
@@ -128,6 +161,18 @@ defmodule Smolsqls.ReadModel.ReplicationTest do
     )
   end
 
+  defp insert_api_key(conn, tenant_id, api_key, token_hash) do
+    Postgrex.query!(
+      conn,
+      """
+      INSERT INTO tenant_api_keys
+        (id, tenant_id, token_hash, token_ciphertext, enabled, inserted_at, updated_at)
+      VALUES (gen_random_uuid(), $1::uuid, $2, $3, true, now(), now())
+      """,
+      [Ecto.UUID.dump!(tenant_id), token_hash, Smolsqls.Secrets.encrypt(api_key)]
+    )
+  end
+
   defp insert_token(conn, database_id, token, token_hash) do
     Postgrex.query!(
       conn,
@@ -137,6 +182,15 @@ defmodule Smolsqls.ReadModel.ReplicationTest do
       VALUES (gen_random_uuid(), $1::uuid, $2, $3, true, now(), now())
       """,
       [Ecto.UUID.dump!(database_id), token_hash, Smolsqls.Secrets.encrypt(token)]
+    )
+  end
+
+  defp drop_slot(conn) do
+    Postgrex.query!(
+      conn,
+      "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots " <>
+        "WHERE slot_name = $1 AND NOT active",
+      [Smolsqls.ReadModel.Replication.slot_name()]
     )
   end
 

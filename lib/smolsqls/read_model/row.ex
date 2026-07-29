@@ -10,7 +10,7 @@ defmodule Smolsqls.ReadModel.Row do
   `Smolsqls.ReadModel.ProjectionTest` fails if the two paths drift.
   """
 
-  alias Smolsqls.ControlPlane.{Database, DatabaseToken, Tenant}
+  alias Smolsqls.ControlPlane.{Database, DatabaseToken, Tenant, TenantApiKey}
 
   @spec build_database(%{optional(String.t()) => String.t() | nil}) :: Database.t()
   def build_database(values) do
@@ -30,7 +30,13 @@ defmodule Smolsqls.ReadModel.Row do
 
   @spec build_tenant(%{optional(String.t()) => String.t() | nil}) :: Tenant.t()
   def build_tenant(values) do
-    %Tenant{id: Map.fetch!(values, "id"), limits: map(Map.get(values, "limits"))}
+    %Tenant{
+      id: Map.fetch!(values, "id"),
+      name: Map.get(values, "name"),
+      slug: Map.get(values, "slug"),
+      limits: map(Map.get(values, "limits")),
+      inserted_at: datetime(Map.get(values, "inserted_at"))
+    }
   end
 
   @spec build_database_token(%{optional(String.t()) => String.t() | nil}) :: DatabaseToken.t()
@@ -38,6 +44,17 @@ defmodule Smolsqls.ReadModel.Row do
     %DatabaseToken{
       id: Map.get(values, "id"),
       database_id: Map.get(values, "database_id"),
+      token_hash: Map.fetch!(values, "token_hash"),
+      enabled: boolean(Map.get(values, "enabled")),
+      expires_at: datetime(Map.get(values, "expires_at"))
+    }
+  end
+
+  @spec build_tenant_api_key(%{optional(String.t()) => String.t() | nil}) :: TenantApiKey.t()
+  def build_tenant_api_key(values) do
+    %TenantApiKey{
+      id: Map.get(values, "id"),
+      tenant_id: Map.get(values, "tenant_id"),
       token_hash: Map.fetch!(values, "token_hash"),
       enabled: boolean(Map.get(values, "enabled")),
       expires_at: datetime(Map.get(values, "expires_at"))

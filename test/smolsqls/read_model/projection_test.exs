@@ -40,9 +40,46 @@ defmodule Smolsqls.ReadModel.ProjectionTest do
     tenant = tenant_fixture()
 
     assert {:ok, loaded} = Source.fetch(:tenants, tenant.id)
-    built = Row.build_tenant(%{"id" => tenant.id, "limits" => "{}"})
+
+    built =
+      Row.build_tenant(%{
+        "id" => tenant.id,
+        "name" => tenant.name,
+        "slug" => tenant.slug,
+        "limits" => "{}",
+        "inserted_at" => DateTime.to_iso8601(tenant.inserted_at)
+      })
 
     assert_projected(loaded, built, :tenants)
+  end
+
+  test "Row and Source populate exactly the projected fields for a tenant api key" do
+    tenant = tenant_fixture()
+    hash = Smolsqls.Secrets.hash(tenant.api_key)
+
+    assert {:ok, loaded} = Source.fetch(:tenant_api_keys, hash)
+
+    built =
+      Row.build_tenant_api_key(%{
+        "id" => loaded.id,
+        "tenant_id" => tenant.id,
+        "token_hash" => hash,
+        "enabled" => "t",
+        "expires_at" => nil
+      })
+
+    assert_projected(loaded, built, :tenant_api_keys)
+  end
+
+  test "write-through narrows a full Postgres row to the projection" do
+    tenant = tenant_fixture()
+    full = Smolsqls.Repo.get!(Smolsqls.ControlPlane.Tenant, tenant.id)
+
+    projected = Projection.project(:tenants, full)
+
+    assert MapSet.subset?(populated(projected), MapSet.new(Projection.fields(:tenants)))
+    assert is_nil(projected.updated_at)
+    assert projected.name == full.name
   end
 
   test "Row and Source populate exactly the projected fields for a database token" do

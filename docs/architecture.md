@@ -55,9 +55,10 @@ logical replication slot and update rows a node already holds without ever
 populating new ones.
 
 The upshot for availability: **a query for a database used recently keeps working
-while Postgres is down**, a cold one gets a retryable 503, and the management API
-and dashboard fail with Postgres by design. A cache miss during an outage is
-never reported as an auth failure.
+while Postgres is down**, and a cold one gets a retryable 503 rather than
+anything resembling an auth failure. Management auth is cached too, but the
+management API and dashboard still fail with Postgres — their endpoints query it
+for their own payloads.
 
 Full details — projection, refresh-ahead, negative caching, eviction, the
 mutation-during-load race, and the metrics to alert on — are in
