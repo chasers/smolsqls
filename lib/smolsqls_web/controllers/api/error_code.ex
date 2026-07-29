@@ -132,6 +132,12 @@ defmodule SmolsqlsWeb.Api.ErrorCode do
       {:service_unavailable, "database_relocating",
        "database is being moved to another region; retry shortly"}
 
+  def classify(:metadb_unavailable),
+    do:
+      {:service_unavailable, "metadb_unavailable",
+       "the metadata store is temporarily unreachable and this database is not cached " <>
+         "on this node; retry shortly"}
+
   def classify(:database_not_active),
     do: {:service_unavailable, "database_unavailable", "database is not active"}
 

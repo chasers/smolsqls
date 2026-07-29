@@ -32,6 +32,22 @@ defmodule Smolsqls.Telemetry do
     * `[:smolsqls, :hot_servers]` — `%{count}` (polled)
     * `[:smolsqls, :syn, :conflict_resolved]` — `%{count}` (registry
       conflict resolved at partition heal or reassign race)
+    * `[:smolsqls, :read_model, :entries]` — `%{entries, memory_bytes}`,
+      tag `table` (polled; cache size per table)
+    * `[:smolsqls, :read_model, :counters]` — `%{hits, negative_hits,
+      misses, refreshes, collapsed, load_timeouts, load_failures,
+      discarded, expired, evicted}` (polled, cumulative). `misses` is
+      metadb read load; `discarded` counts loads thrown away because the
+      key was mutated mid-flight
+    * `[:smolsqls, :read_model, :health]` — `%{inflight, stale}`
+      (polled). `stale` is 1 while the metadb is unreachable, which is
+      also when entry expiry is paused and the node is serving whatever
+      it last loaded
+    * `[:smolsqls, :read_model, :sweep]` — `%{expired, evicted}`
+    * `[:smolsqls, :read_model, :load_discarded]` — `%{count}`, tag
+      `table`
+    * `[:smolsqls, :read_model, :load_failed]` — `%{count}`, tag `table`
+    * `[:smolsqls, :read_model, :flushed]` — `%{count}`, tag `reason`
   """
 
   @spec query(integer(), atom() | String.t(), boolean(), boolean()) :: :ok
@@ -97,6 +113,72 @@ defmodule Smolsqls.Telemetry do
   @spec syn_conflict_resolved() :: :ok
   def syn_conflict_resolved do
     :telemetry.execute([:smolsqls, :syn, :conflict_resolved], %{count: 1}, %{})
+  end
+
+  @spec read_model_sweep(non_neg_integer(), non_neg_integer()) :: :ok
+  def read_model_sweep(expired, evicted) do
+    :telemetry.execute(
+      [:smolsqls, :read_model, :sweep],
+      %{expired: expired, evicted: evicted},
+      %{}
+    )
+  end
+
+  @spec read_model_load_discarded(atom()) :: :ok
+  def read_model_load_discarded(table) do
+    :telemetry.execute(
+      [:smolsqls, :read_model, :load_discarded],
+      %{count: 1},
+      %{table: to_string(table)}
+    )
+  end
+
+  @spec read_model_load_failed(atom()) :: :ok
+  def read_model_load_failed(table) do
+    :telemetry.execute(
+      [:smolsqls, :read_model, :load_failed],
+      %{count: 1},
+      %{table: to_string(table)}
+    )
+  end
+
+  @spec read_model_flushed(atom()) :: :ok
+  def read_model_flushed(reason) do
+    :telemetry.execute(
+      [:smolsqls, :read_model, :flushed],
+      %{count: 1},
+      %{reason: to_string(reason)}
+    )
+  end
+
+  @doc """
+  Poller measurement for the read-model cache: per-table size, the
+  cumulative hit/miss/refresh counters, and whether this node is
+  currently serving a cache it cannot refresh.
+  """
+  @spec emit_read_model() :: :ok
+  def emit_read_model do
+    case Smolsqls.ReadModel.stats() do
+      %{tables: tables, counters: counters} = stats ->
+        for {table, %{entries: entries, memory_bytes: memory_bytes}} <- tables do
+          :telemetry.execute(
+            [:smolsqls, :read_model, :entries],
+            %{entries: entries, memory_bytes: memory_bytes},
+            %{table: to_string(table)}
+          )
+        end
+
+        :telemetry.execute([:smolsqls, :read_model, :counters], counters, %{})
+
+        :telemetry.execute(
+          [:smolsqls, :read_model, :health],
+          %{inflight: stats.inflight, stale: if(stats.metadb_ok?, do: 0, else: 1)},
+          %{}
+        )
+
+      _not_running ->
+        :ok
+    end
   end
 
   @doc """

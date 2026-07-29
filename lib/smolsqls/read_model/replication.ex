@@ -1,12 +1,22 @@
 defmodule Smolsqls.ReadModel.Replication do
   @moduledoc """
   Streams the metadb WAL into the read model over a **permanent**
-  logical replication slot named after this node — exact LSN
-  continuity across reconnects, so nothing is ever missed. WAL
-  retention while a node is down is capped by Postgres'
-  `max_slot_wal_keep_size`; the operator drops a node's slot when the
-  node is decommissioned. If Postgres reports the slot invalidated,
-  the process resnapshots before resuming.
+  logical replication slot named after this node — exact LSN continuity
+  across reconnects, so nothing is ever missed. WAL retention while a
+  node is down is capped by Postgres' `max_slot_wal_keep_size`; the
+  operator drops a node's slot when the node is decommissioned.
+
+  Changes made on other nodes arrive here. Inserts and updates only
+  *replace rows this node already holds* (`ReadModel.replace_if_cached/2`) so the
+  feed can never grow the cache toward a full replica; deletes always
+  apply, so a revocation or a database removal takes effect immediately
+  on every node caching it.
+
+  If Postgres reports the slot missing or invalidated — the WAL it needed
+  is gone, so deletes have been lost — the cache is flushed and the slot
+  recreated. Flushing rather than resnapshotting is the whole benefit of
+  a cache: correctness costs one drop, and the read-through path refills
+  what is still being used.
   """
 
   use Postgrex.ReplicationConnection
@@ -17,6 +27,7 @@ defmodule Smolsqls.ReadModel.Replication do
   alias Smolsqls.ReadModel.{Pgoutput, Row}
 
   @publication "smolsqls_read_model"
+  @invalidated_codes [:undefined_object, :object_not_in_prerequisite_state]
 
   def start_link(opts) do
     conn_opts =
@@ -46,13 +57,16 @@ defmodule Smolsqls.ReadModel.Replication do
 
   @impl true
   def handle_connect(state) do
-    query = "CREATE_REPLICATION_SLOT #{state.slot} LOGICAL pgoutput NOEXPORT_SNAPSHOT"
-    {:query, query, %{state | step: :create_slot}}
+    {:query, create_slot_query(state), %{state | step: :create_slot}}
   end
 
   @impl true
   def handle_result(results, %{step: :create_slot} = state) when is_list(results) do
     start_streaming(state)
+  end
+
+  def handle_result(results, %{step: :drop_slot} = state) when is_list(results) do
+    {:query, create_slot_query(state), %{state | step: :create_slot}}
   end
 
   def handle_result(
@@ -62,9 +76,21 @@ defmodule Smolsqls.ReadModel.Replication do
     start_streaming(state)
   end
 
+  def handle_result(%Postgrex.Error{postgres: %{code: code}} = error, state)
+      when code in @invalidated_codes do
+    Logger.error("read model slot #{state.slot} unusable: #{Exception.message(error)}")
+    ReadModel.flush(:slot_invalidated)
+
+    {:query, "DROP_REPLICATION_SLOT #{state.slot} WAIT", %{state | step: :drop_slot}}
+  end
+
   def handle_result(%Postgrex.Error{} = error, state) do
     Logger.error("read model replication error: #{Exception.message(error)}")
     {:noreply, state}
+  end
+
+  defp create_slot_query(state) do
+    "CREATE_REPLICATION_SLOT #{state.slot} LOGICAL pgoutput NOEXPORT_SNAPSHOT"
   end
 
   defp start_streaming(state) do
@@ -97,44 +123,45 @@ defmodule Smolsqls.ReadModel.Replication do
   defp apply_event({:commit, end_lsn}, state), do: %{state | last_lsn: end_lsn}
 
   defp apply_event({change, "databases", values}, state) when change in [:insert, :update] do
-    ReadModel.put_database(Row.build_database(values))
+    ReadModel.replace_if_cached(:databases, Row.build_database(values))
     state
   end
 
   defp apply_event({:delete, "databases", %{"id" => id}}, state) when is_binary(id) do
-    ReadModel.delete_database(id)
+    ReadModel.delete(:databases, id)
     state
   end
 
   defp apply_event({change, "tenants", values}, state) when change in [:insert, :update] do
-    ReadModel.put_tenant(Row.build_tenant(values))
+    ReadModel.replace_if_cached(:tenants, Row.build_tenant(values))
     state
   end
 
   defp apply_event({:delete, "tenants", %{"id" => id}}, state) when is_binary(id) do
-    ReadModel.delete_tenant(id)
+    ReadModel.delete(:tenants, id)
     state
   end
 
   defp apply_event({change, "database_tokens", values}, state)
        when change in [:insert, :update] do
-    ReadModel.put_database_token(Row.build_database_token(values))
+    ReadModel.replace_if_cached(:database_tokens, Row.build_database_token(values))
     state
   end
 
-  defp apply_event({:delete, "database_tokens", %{"id" => id}}, state) when is_binary(id) do
-    ReadModel.delete_database_token(id)
+  defp apply_event({:delete, "database_tokens", %{"token_hash" => hash}}, state)
+       when is_binary(hash) do
+    ReadModel.delete(:database_tokens, hash)
     state
   end
 
-  defp apply_event({change, "tenant_api_keys", values}, state)
-       when change in [:insert, :update] do
-    ReadModel.put_tenant_api_key(Row.build_tenant_api_key(values))
-    state
-  end
+  defp apply_event({:delete, "database_tokens", _values}, state) do
+    Logger.warning(
+      "database_tokens delete arrived without token_hash; " <>
+        "REPLICA IDENTITY USING INDEX database_tokens_token_hash_index is required. " <>
+        "Dropping cached tokens to stay correct."
+    )
 
-  defp apply_event({:delete, "tenant_api_keys", %{"id" => id}}, state) when is_binary(id) do
-    ReadModel.delete_tenant_api_key(id)
+    ReadModel.truncate(:database_tokens)
     state
   end
 
@@ -142,7 +169,6 @@ defmodule Smolsqls.ReadModel.Replication do
     if "databases" in names, do: ReadModel.truncate(:databases)
     if "tenants" in names, do: ReadModel.truncate(:tenants)
     if "database_tokens" in names, do: ReadModel.truncate(:database_tokens)
-    if "tenant_api_keys" in names, do: ReadModel.truncate(:tenant_api_keys)
     state
   end
 

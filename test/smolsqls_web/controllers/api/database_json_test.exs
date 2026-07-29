@@ -4,6 +4,8 @@ defmodule SmolsqlsWeb.Api.DatabaseJSONTest do
   alias Smolsqls.ControlPlane.Database
   alias SmolsqlsWeb.Api.DatabaseJSON
 
+  @limits Smolsqls.Limits.defaults()
+
   defp database(attrs) do
     struct(
       %Database{
@@ -18,7 +20,9 @@ defmodule SmolsqlsWeb.Api.DatabaseJSONTest do
 
   test "surfaces region and cloud on reads without a token" do
     db = database(region: "gcp-us-central1", cloud: "gcp")
-    %{data: data} = DatabaseJSON.show(%{database: db, include_token: false})
+
+    %{data: data} =
+      DatabaseJSON.show(%{database: db, limits: @limits, include_token: false})
 
     assert data.region == "gcp-us-central1"
     assert data.cloud == "gcp"
@@ -27,7 +31,8 @@ defmodule SmolsqlsWeb.Api.DatabaseJSONTest do
 
   test "emits global and regional connection strings when a token is included" do
     db = database(region: "gcp-us-central1", cloud: "gcp", auth_token: "sk_test")
-    %{data: data} = DatabaseJSON.show(%{database: db, include_token: true})
+
+    %{data: data} = DatabaseJSON.show(%{database: db, limits: @limits, include_token: true})
 
     assert data.connections.libsql =~ "libsql://"
     assert data.connections.libsql =~ "authToken=sk_test"
@@ -41,7 +46,8 @@ defmodule SmolsqlsWeb.Api.DatabaseJSONTest do
 
   test "omits the regional block when the database has no region" do
     db = database(region: nil, auth_token: "sk_test")
-    %{data: data} = DatabaseJSON.show(%{database: db, include_token: true})
+
+    %{data: data} = DatabaseJSON.show(%{database: db, limits: @limits, include_token: true})
 
     assert data.connections.libsql =~ "libsql://"
     refute Map.has_key?(data.connections, :regional)

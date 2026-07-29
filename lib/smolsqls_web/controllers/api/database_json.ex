@@ -3,14 +3,14 @@ defmodule SmolsqlsWeb.Api.DatabaseJSON do
   alias SmolsqlsWeb.ConnectionStrings
 
   def index(%{databases: databases, next: next}) do
-    %{data: Enum.map(databases, &data(&1, false)), next: next}
+    %{data: Enum.map(databases, &data(&1, false, nil)), next: next}
   end
 
-  def show(%{database: database, include_token: include_token}) do
-    %{data: data(database, include_token)}
+  def show(%{database: database, limits: limits, include_token: include_token}) do
+    %{data: data(database, include_token, limits)}
   end
 
-  defp data(%Database{} = database, include_token) do
+  defp data(%Database{} = database, include_token, limits) do
     base = %{
       id: database.id,
       name: database.name,
@@ -28,11 +28,11 @@ defmodule SmolsqlsWeb.Api.DatabaseJSON do
       include_token and is_binary(database.auth_token) ->
         base
         |> Map.put(:auth_token, database.auth_token)
-        |> Map.put(:limits, Smolsqls.Limits.resolve(database))
+        |> Map.put(:limits, limits)
         |> Map.put(:connections, connections(database))
 
       include_token ->
-        Map.put(base, :limits, Smolsqls.Limits.resolve(database))
+        Map.put(base, :limits, limits)
 
       true ->
         base

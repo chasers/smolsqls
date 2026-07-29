@@ -147,7 +147,7 @@ defmodule Smolsqls.ControlPlaneTest do
       tenant = tenant_fixture()
       database = database_fixture(tenant)
 
-      assert {:ok, placed} = ControlPlane.mark_placed(database, Node.self(), "/tmp/x.db")
+      assert {:ok, placed} = ControlPlane.mark_placed(database.id, Node.self(), "/tmp/x.db")
       assert placed.status == :active
       assert placed.node == to_string(Node.self())
       assert placed.file_path == "/tmp/x.db"

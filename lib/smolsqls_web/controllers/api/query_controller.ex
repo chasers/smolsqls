@@ -11,7 +11,7 @@ defmodule SmolsqlsWeb.Api.QueryController do
 
     with {:ok, token} <- bearer_token(conn),
          {:ok, database} <- ControlPlane.authenticate_database(database_id, token),
-         limits = Smolsqls.Limits.resolve(database),
+         {:ok, limits} <- Smolsqls.Limits.resolve(database),
          :ok <- check_rate_limit(database, limits),
          :ok <- check_statement(sql),
          {:ok, result} <- DataPlane.query(database.id, sql, args, query_timeout(limits)) do

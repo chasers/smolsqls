@@ -2,6 +2,7 @@ defmodule SmolsqlsWeb.Api.DatabaseController do
   use SmolsqlsWeb, :controller
 
   alias Smolsqls.ControlPlane
+  alias Smolsqls.Limits
 
   action_fallback SmolsqlsWeb.Api.FallbackController
 
@@ -13,16 +14,18 @@ defmodule SmolsqlsWeb.Api.DatabaseController do
   end
 
   def create(conn, params) do
-    with {:ok, database} <- Smolsqls.create_database(conn.assigns.current_tenant, params) do
+    with {:ok, database} <- Smolsqls.create_database(conn.assigns.current_tenant, params),
+         {:ok, limits} <- resolve_limits(conn, database) do
       conn
       |> put_status(:created)
-      |> render(:show, database: database, include_token: true)
+      |> render(:show, database: database, limits: limits, include_token: true)
     end
   end
 
   def show(conn, %{"id" => id}) do
-    with {:ok, database} <- fetch_database(conn, id) do
-      render(conn, :show, database: database, include_token: true)
+    with {:ok, database} <- fetch_database(conn, id),
+         {:ok, limits} <- resolve_limits(conn, database) do
+      render(conn, :show, database: database, limits: limits, include_token: true)
     end
   end
 
@@ -32,8 +35,9 @@ defmodule SmolsqlsWeb.Api.DatabaseController do
     with {:ok, database} <- fetch_database(conn, id),
          {:ok, database} <- ControlPlane.update_database_settings(database, settings),
          :ok <- Smolsqls.DataPlane.set_replication(database),
-         {:ok, database} <- maybe_relocate(database, params) do
-      render(conn, :show, database: database, include_token: true)
+         {:ok, database} <- maybe_relocate(database, params),
+         {:ok, limits} <- resolve_limits(conn, database) do
+      render(conn, :show, database: database, limits: limits, include_token: true)
     end
   end
 
@@ -54,11 +58,16 @@ defmodule SmolsqlsWeb.Api.DatabaseController do
     attrs = Map.take(params, ["name", "expires_at", "timestamp"])
 
     with {:ok, source} <- fetch_database(conn, id),
-         {:ok, database} <- Smolsqls.branch_database(source, attrs) do
+         {:ok, database} <- Smolsqls.branch_database(source, attrs),
+         {:ok, limits} <- resolve_limits(conn, database) do
       conn
       |> put_status(:created)
-      |> render(:show, database: database, include_token: true)
+      |> render(:show, database: database, limits: limits, include_token: true)
     end
+  end
+
+  defp resolve_limits(conn, database) do
+    Limits.resolve(database, conn.assigns.current_tenant)
   end
 
   defp fetch_database(conn, id) do

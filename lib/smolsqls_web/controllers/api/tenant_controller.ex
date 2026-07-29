@@ -10,17 +10,18 @@ defmodule SmolsqlsWeb.Api.TenantController do
            ControlPlane.create_tenant(params, signup_ip: SmolsqlsWeb.ClientIP.get(conn)) do
       conn
       |> put_status(:created)
-      |> render(:show, tenant: tenant, include_api_key: true)
+      |> render(:show, tenant: tenant, limits: limits(tenant), include_api_key: true)
     end
   end
 
   def show(conn, _params) do
-    render(conn, :show, tenant: conn.assigns.current_tenant, include_api_key: false)
+    tenant = conn.assigns.current_tenant
+    render(conn, :show, tenant: tenant, limits: limits(tenant), include_api_key: false)
   end
 
   def update(conn, params) do
     with {:ok, tenant} <- ControlPlane.update_tenant(conn.assigns.current_tenant, params) do
-      render(conn, :show, tenant: tenant, include_api_key: false)
+      render(conn, :show, tenant: tenant, limits: limits(tenant), include_api_key: false)
     end
   end
 
@@ -28,5 +29,10 @@ defmodule SmolsqlsWeb.Api.TenantController do
     with {:ok, _tenant} <- Smolsqls.delete_tenant(conn.assigns.current_tenant) do
       send_resp(conn, :no_content, "")
     end
+  end
+
+  defp limits(tenant) do
+    {:ok, limits} = Smolsqls.Limits.resolve(nil, tenant)
+    limits
   end
 end

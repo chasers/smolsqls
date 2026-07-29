@@ -1,78 +1,46 @@
 defmodule Smolsqls.ReadModel.Row do
   @moduledoc """
-  Builds control-plane structs from the text-format column values that
-  both the COPY snapshot and the pgoutput feed produce.
+  Builds control-plane structs from the text-format column values the
+  pgoutput feed produces.
+
+  Only the columns in `Smolsqls.ReadModel.Projection` are read — the same
+  set `Smolsqls.ReadModel.Source` selects — so a row built here is shaped
+  exactly like one loaded from Postgres on a cache miss. Non-projected
+  fields stay `nil` and must not be relied on;
+  `Smolsqls.ReadModel.ProjectionTest` fails if the two paths drift.
   """
 
-  alias Smolsqls.ControlPlane.{Database, DatabaseToken, Tenant, TenantApiKey}
-
-  @database_columns ~w(id tenant_id name status node region cloud file_path litestream_enabled snapshot_generation limits source_database_id branch_point_at expires_at inserted_at updated_at)
-  @tenant_columns ~w(id name slug limits inserted_at updated_at)
-  @database_token_columns ~w(id database_id token_hash enabled expires_at inserted_at updated_at)
-  @tenant_api_key_columns ~w(id tenant_id token_hash enabled expires_at inserted_at updated_at)
-
-  def database_columns, do: @database_columns
-  def tenant_columns, do: @tenant_columns
-  def database_token_columns, do: @database_token_columns
-  def tenant_api_key_columns, do: @tenant_api_key_columns
+  alias Smolsqls.ControlPlane.{Database, DatabaseToken, Tenant}
 
   @spec build_database(%{optional(String.t()) => String.t() | nil}) :: Database.t()
   def build_database(values) do
     %Database{
       id: Map.fetch!(values, "id"),
       tenant_id: Map.fetch!(values, "tenant_id"),
-      name: Map.fetch!(values, "name"),
-      status: status(Map.fetch!(values, "status")),
+      status: status(Map.get(values, "status")),
       node: Map.get(values, "node"),
       region: Map.get(values, "region"),
       cloud: Map.get(values, "cloud"),
       file_path: Map.get(values, "file_path"),
       litestream_enabled: boolean(Map.get(values, "litestream_enabled")),
       snapshot_generation: integer(Map.get(values, "snapshot_generation")),
-      limits: map(Map.get(values, "limits")),
-      source_database_id: Map.get(values, "source_database_id"),
-      branch_point_at: datetime(Map.get(values, "branch_point_at")),
-      expires_at: datetime(Map.get(values, "expires_at")),
-      inserted_at: datetime(Map.get(values, "inserted_at")),
-      updated_at: datetime(Map.get(values, "updated_at"))
+      limits: map(Map.get(values, "limits"))
     }
   end
 
   @spec build_tenant(%{optional(String.t()) => String.t() | nil}) :: Tenant.t()
   def build_tenant(values) do
-    %Tenant{
-      id: Map.fetch!(values, "id"),
-      name: Map.fetch!(values, "name"),
-      slug: Map.fetch!(values, "slug"),
-      limits: map(Map.get(values, "limits")),
-      inserted_at: datetime(Map.get(values, "inserted_at")),
-      updated_at: datetime(Map.get(values, "updated_at"))
-    }
+    %Tenant{id: Map.fetch!(values, "id"), limits: map(Map.get(values, "limits"))}
   end
 
   @spec build_database_token(%{optional(String.t()) => String.t() | nil}) :: DatabaseToken.t()
   def build_database_token(values) do
     %DatabaseToken{
-      id: Map.fetch!(values, "id"),
-      database_id: Map.fetch!(values, "database_id"),
+      id: Map.get(values, "id"),
+      database_id: Map.get(values, "database_id"),
       token_hash: Map.fetch!(values, "token_hash"),
       enabled: boolean(Map.get(values, "enabled")),
-      expires_at: datetime(Map.get(values, "expires_at")),
-      inserted_at: datetime(Map.get(values, "inserted_at")),
-      updated_at: datetime(Map.get(values, "updated_at"))
-    }
-  end
-
-  @spec build_tenant_api_key(%{optional(String.t()) => String.t() | nil}) :: TenantApiKey.t()
-  def build_tenant_api_key(values) do
-    %TenantApiKey{
-      id: Map.fetch!(values, "id"),
-      tenant_id: Map.fetch!(values, "tenant_id"),
-      token_hash: Map.fetch!(values, "token_hash"),
-      enabled: boolean(Map.get(values, "enabled")),
-      expires_at: datetime(Map.get(values, "expires_at")),
-      inserted_at: datetime(Map.get(values, "inserted_at")),
-      updated_at: datetime(Map.get(values, "updated_at"))
+      expires_at: datetime(Map.get(values, "expires_at"))
     }
   end
 
@@ -116,4 +84,5 @@ defmodule Smolsqls.ReadModel.Row do
   defp status("moving"), do: :moving
   defp status("deleting"), do: :deleting
   defp status("error"), do: :error
+  defp status(_other), do: :pending
 end

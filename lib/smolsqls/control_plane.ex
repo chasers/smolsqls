@@ -5,12 +5,19 @@ defmodule Smolsqls.ControlPlane do
   carried out by `Smolsqls.DataPlane` and, in a deployed cluster, by the
   Kubernetes operator.
 
-  Request-path reads (`authenticate_tenant/1`, `authenticate_database/2`,
-  `authenticate_database_by_token/1`, `lookup_database/1`) are served
-  from `Smolsqls.ReadModel` when it is ready, so Postgres never sits on
-  the data path. Writes go to Postgres (the source of truth) and are
-  also applied to the local read model immediately; other nodes
-  converge via the WAL feed.
+  Query-path reads (`authenticate_database/2`,
+  `authenticate_database_by_token/1`, `lookup_database/1`,
+  `lookup_tenant/1`) go through `Smolsqls.ReadModel`, a bounded cache
+  that reads Postgres only when it does not already hold the row — so a
+  recently-active database keeps serving while the metadb is
+  unreachable. They return `{:error, :metadb_unavailable}` for a cache
+  miss during an outage, which callers must surface as retryable rather
+  than as an auth failure.
+
+  Management-path reads, `authenticate_tenant/1` included, go straight
+  to Postgres and fail with it. Writes go to Postgres (the source of
+  truth) and are applied to the local cache immediately; other nodes
+  converge over the WAL feed.
 
   Credentials are managed rows, not columns: `database_tokens` and
   `tenant_api_keys` hold any number of permanent secrets per owner,
@@ -25,6 +32,7 @@ defmodule Smolsqls.ControlPlane do
   alias Smolsqls.ControlPlane.{Database, DatabaseToken, Tenant, TenantApiKey}
   alias Smolsqls.ControlPlane.Node, as: NodeRow
   alias Smolsqls.ReadModel
+  alias Smolsqls.ReadModel.Source
   alias Smolsqls.Repo
 
   @doc """
@@ -56,8 +64,7 @@ defmodule Smolsqls.ControlPlane do
       |> case do
         {:ok, {tenant, api_key}} ->
           record_signup(signup_ip)
-          write_through({:ok, tenant}, &ReadModel.put_tenant/1)
-          write_through({:ok, api_key}, &ReadModel.put_tenant_api_key/1)
+          write_through({:ok, tenant}, &ReadModel.put(:tenants, &1))
           {:ok, %{tenant | api_key: api_key.token}}
 
         {:error, changeset} ->
@@ -75,36 +82,35 @@ defmodule Smolsqls.ControlPlane do
   def get_tenant(id), do: Repo.get(Tenant, id)
 
   @doc """
-  Hot-path tenant lookup, served from the read model when ready.
+  Query-path tenant lookup — cached, and read through to Postgres on a
+  miss. Carries only `id` and `limits`; use `get_tenant/1` for anything
+  a management response renders.
   """
-  @spec lookup_tenant(String.t()) :: Tenant.t() | nil
-  def lookup_tenant(id) when is_binary(id) do
-    if ReadModel.ready?() do
-      ReadModel.get_tenant(id)
-    else
-      get_tenant(id)
-    end
-  end
+  @spec lookup_tenant(String.t()) :: ReadModel.result()
+  def lookup_tenant(id) when is_binary(id), do: ReadModel.fetch(:tenants, id)
 
   def get_tenant_by_slug(slug), do: Repo.get_by(Tenant, slug: slug)
 
+  @doc """
+  Management-path authentication. Reads Postgres on every request —
+  tenant API keys are deliberately not cached, since nothing on the
+  query path authenticates with one — so the dashboard and the
+  management API fail while the metadb is down.
+  """
+  @spec authenticate_tenant(String.t()) ::
+          {:ok, Tenant.t()} | {:error, :unauthorized | :metadb_unavailable}
   def authenticate_tenant(api_key) when is_binary(api_key) do
     hash = Smolsqls.Secrets.hash(api_key)
 
-    lookup =
-      if ReadModel.ready?() do
-        ReadModel.get_tenant_api_key_by_hash(hash)
+    Source.guard(fn ->
+      with %TenantApiKey{} = key <- Repo.get_by(TenantApiKey, token_hash: hash),
+           true <- token_usable?(key),
+           %Tenant{} = tenant <- Repo.get(Tenant, key.tenant_id) do
+        {:ok, tenant}
       else
-        Repo.get_by(TenantApiKey, token_hash: hash)
+        _ -> {:error, :unauthorized}
       end
-
-    with %TenantApiKey{} = key <- lookup,
-         true <- token_usable?(key),
-         %Tenant{} = tenant <- lookup_tenant(key.tenant_id) do
-      {:ok, tenant}
-    else
-      _ -> {:error, :unauthorized}
-    end
+    end)
   end
 
   @doc """
@@ -154,7 +160,6 @@ defmodule Smolsqls.ControlPlane do
     %TenantApiKey{tenant_id: tenant.id}
     |> TenantApiKey.create_changeset(attrs)
     |> Repo.insert()
-    |> write_through(&ReadModel.put_tenant_api_key/1)
   end
 
   @spec update_tenant_api_key(TenantApiKey.t(), map()) ::
@@ -168,7 +173,6 @@ defmodule Smolsqls.ControlPlane do
       key
       |> TenantApiKey.update_changeset(attrs)
       |> Repo.update()
-      |> write_through(&ReadModel.put_tenant_api_key/1)
     end
   end
 
@@ -180,7 +184,6 @@ defmodule Smolsqls.ControlPlane do
     else
       key
       |> Repo.delete()
-      |> write_through(&ReadModel.delete_tenant_api_key(&1.id))
     end
   end
 
@@ -196,13 +199,13 @@ defmodule Smolsqls.ControlPlane do
     tenant
     |> Tenant.update_changeset(attrs)
     |> Repo.update()
-    |> write_through(&ReadModel.put_tenant/1)
+    |> write_through(&ReadModel.put(:tenants, &1))
   end
 
   def delete_tenant(%Tenant{} = tenant) do
     tenant
     |> Repo.delete()
-    |> write_through(&ReadModel.delete_tenant(&1.id))
+    |> write_through(&ReadModel.delete_row(:tenants, &1))
   end
 
   def list_databases(%Tenant{id: tenant_id}) do
@@ -333,24 +336,30 @@ defmodule Smolsqls.ControlPlane do
   end
 
   @doc """
-  Hot-path database lookup, served from the read model when ready.
+  Query-path database lookup — cached, and read through to Postgres on a
+  miss. The row carries only the columns the data plane needs (see
+  `Smolsqls.ReadModel.Source`); `get_database/1` is the one to use where
+  a full row is expected.
   """
-  @spec lookup_database(String.t()) :: Database.t() | nil
-  def lookup_database(id) when is_binary(id) do
-    if ReadModel.ready?() do
-      ReadModel.get_database(id)
-    else
-      get_database(id)
-    end
-  end
+  @spec lookup_database(String.t()) :: ReadModel.result()
+  def lookup_database(id) when is_binary(id), do: ReadModel.fetch(:databases, id)
 
+  @doc """
+  Query-path authentication. `{:error, :metadb_unavailable}` means the
+  answer is unknown, not that the credentials are bad — callers must
+  keep the two apart so an outage never reads to a client as a revoked
+  token.
+  """
+  @spec authenticate_database(String.t(), String.t()) ::
+          {:ok, Database.t()} | {:error, :unauthorized | :metadb_unavailable}
   def authenticate_database(id, auth_token)
       when is_binary(id) and is_binary(auth_token) do
-    with %DatabaseToken{} = token <- database_token_by_secret(auth_token),
+    with {:ok, %DatabaseToken{} = token} <- database_token_by_secret(auth_token),
          true <- token.database_id == id and token_usable?(token),
-         %Database{} = database <- lookup_database(id) do
+         {:ok, %Database{} = database} <- lookup_database(id) do
       {:ok, database}
     else
+      {:error, :metadb_unavailable} -> {:error, :metadb_unavailable}
       _ -> {:error, :unauthorized}
     end
   end
@@ -360,25 +369,20 @@ defmodule Smolsqls.ControlPlane do
   through any of its usable tokens.
   """
   @spec authenticate_database_by_token(String.t()) ::
-          {:ok, Database.t()} | {:error, :unauthorized}
+          {:ok, Database.t()} | {:error, :unauthorized | :metadb_unavailable}
   def authenticate_database_by_token(auth_token) when is_binary(auth_token) do
-    with %DatabaseToken{} = token <- database_token_by_secret(auth_token),
+    with {:ok, %DatabaseToken{} = token} <- database_token_by_secret(auth_token),
          true <- token_usable?(token),
-         %Database{} = database <- lookup_database(token.database_id) do
+         {:ok, %Database{} = database} <- lookup_database(token.database_id) do
       {:ok, database}
     else
+      {:error, :metadb_unavailable} -> {:error, :metadb_unavailable}
       _ -> {:error, :unauthorized}
     end
   end
 
   defp database_token_by_secret(secret) do
-    hash = Smolsqls.Secrets.hash(secret)
-
-    if ReadModel.ready?() do
-      ReadModel.get_database_token_by_hash(hash)
-    else
-      Repo.get_by(DatabaseToken, token_hash: hash)
-    end
+    ReadModel.fetch(:database_tokens, Smolsqls.Secrets.hash(secret))
   end
 
   @spec list_database_tokens(Database.t()) :: [DatabaseToken.t()]
@@ -406,7 +410,7 @@ defmodule Smolsqls.ControlPlane do
     %DatabaseToken{database_id: database.id}
     |> DatabaseToken.create_changeset(attrs)
     |> Repo.insert()
-    |> write_through(&ReadModel.put_database_token/1)
+    |> write_through(&ReadModel.put(:database_tokens, &1))
   end
 
   @spec update_database_token(DatabaseToken.t(), map()) ::
@@ -415,7 +419,7 @@ defmodule Smolsqls.ControlPlane do
     token
     |> DatabaseToken.update_changeset(attrs)
     |> Repo.update()
-    |> write_through(&ReadModel.put_database_token/1)
+    |> write_through(&ReadModel.put(:database_tokens, &1))
   end
 
   @spec delete_database_token(DatabaseToken.t()) ::
@@ -423,7 +427,7 @@ defmodule Smolsqls.ControlPlane do
   def delete_database_token(%DatabaseToken{} = token) do
     token
     |> Repo.delete()
-    |> write_through(&ReadModel.delete_database_token(&1.id))
+    |> write_through(&ReadModel.delete_row(:database_tokens, &1))
   end
 
   def create_database(%Tenant{} = tenant, attrs) do
@@ -515,8 +519,8 @@ defmodule Smolsqls.ControlPlane do
   end
 
   defp finish_database_insert({:ok, {database, token}}) do
-    write_through({:ok, database}, &ReadModel.put_database/1)
-    write_through({:ok, token}, &ReadModel.put_database_token/1)
+    write_through({:ok, database}, &ReadModel.put(:databases, &1))
+    write_through({:ok, token}, &ReadModel.put(:database_tokens, &1))
     {:ok, %{database | auth_token: token.token}}
   end
 
@@ -531,7 +535,7 @@ defmodule Smolsqls.ControlPlane do
     database
     |> Database.settings_changeset(attrs)
     |> Repo.update()
-    |> write_through(&ReadModel.put_database/1)
+    |> write_through(&ReadModel.put(:databases, &1))
   end
 
   @doc """
@@ -546,7 +550,7 @@ defmodule Smolsqls.ControlPlane do
     database
     |> Database.placement_changeset(%{status: :moving})
     |> Repo.update()
-    |> write_through(&ReadModel.put_database/1)
+    |> write_through(&ReadModel.put(:databases, &1))
   end
 
   @doc """
@@ -558,7 +562,7 @@ defmodule Smolsqls.ControlPlane do
     database
     |> Database.placement_changeset(%{status: :active})
     |> Repo.update()
-    |> write_through(&ReadModel.put_database/1)
+    |> write_through(&ReadModel.put(:databases, &1))
   end
 
   @doc """
@@ -573,18 +577,32 @@ defmodule Smolsqls.ControlPlane do
     database
     |> Database.move_changeset(%{region: region, node: to_string(target_node)})
     |> Repo.update()
-    |> write_through(&ReadModel.put_database/1)
+    |> write_through(&ReadModel.put(:databases, &1))
   end
 
-  def mark_placed(%Database{} = database, node, file_path) do
-    database
-    |> Database.placement_changeset(%{
-      status: :active,
-      node: to_string(node),
-      file_path: file_path
-    })
-    |> Repo.update()
-    |> write_through(&ReadModel.put_database/1)
+  @doc """
+  Records that a database is now active on `node` at `file_path`.
+
+  Takes an id rather than a struct on purpose: the caller reached here
+  from a query-path lookup, so its row is a projected read-model row
+  whose non-projected fields are `nil`. Updating by query keeps a
+  partial row from having any route back into Postgres.
+  """
+  @spec mark_placed(String.t(), node(), Path.t()) ::
+          {:ok, Database.t()} | {:error, :not_found}
+  def mark_placed(database_id, node, file_path) when is_binary(database_id) do
+    now = DateTime.utc_now()
+
+    Database
+    |> where([d], d.id == ^database_id)
+    |> select([d], d)
+    |> Repo.update_all(
+      set: [status: :active, node: to_string(node), file_path: file_path, updated_at: now]
+    )
+    |> case do
+      {1, [database]} -> write_through({:ok, database}, &ReadModel.put(:databases, &1))
+      {0, _rows} -> {:error, :not_found}
+    end
   end
 
   @doc """
@@ -656,7 +674,7 @@ defmodule Smolsqls.ControlPlane do
       set: [last_snapshot_at: now, updated_at: now]
     )
     |> case do
-      {1, [database]} -> write_through({:ok, database}, &ReadModel.put_database/1)
+      {1, [database]} -> write_through({:ok, database}, &ReadModel.put(:databases, &1))
       {0, _} -> {:error, :not_found}
     end
   end
@@ -665,17 +683,17 @@ defmodule Smolsqls.ControlPlane do
     database
     |> Database.placement_changeset(%{status: :deleting})
     |> Repo.update()
-    |> write_through(&ReadModel.put_database/1)
+    |> write_through(&ReadModel.put(:databases, &1))
   end
 
   def delete_database(%Database{} = database) do
     database
     |> Repo.delete()
-    |> write_through(&ReadModel.delete_database(&1.id))
+    |> write_through(&ReadModel.delete_row(:databases, &1))
   end
 
   defp write_through({:ok, record} = result, apply_fun) do
-    if ReadModel.ready?(), do: apply_fun.(record)
+    apply_fun.(record)
     result
   end
 

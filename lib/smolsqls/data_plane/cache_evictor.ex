@@ -80,7 +80,7 @@ defmodule Smolsqls.DataPlane.CacheEvictor do
 
   defp evictable?(entry) do
     with :undefined <- Registry.whereis(entry.database_id),
-         %Database{snapshot_generation: generation} when generation > 0 <-
+         {:ok, %Database{snapshot_generation: generation}} when generation > 0 <-
            ControlPlane.lookup_database(entry.database_id) do
       shipped_covers_local_file?(entry.file_path)
     else

@@ -2,13 +2,20 @@ defmodule Smolsqls.ReadModel.ReplicationTest do
   @moduledoc """
   Drives the real WAL feed: writes are committed through a raw Postgrex
   connection (outside the sandbox), streamed through the logical
-  replication slot, decoded from pgoutput, and asserted in ETS.
-  Skipped when the Postgres server does not have `wal_level=logical`.
+  replication slot, decoded from pgoutput, and asserted against the
+  cache. Skipped when the Postgres server does not have
+  `wal_level=logical`.
+
+  What the feed must and must not do: it updates and deletes rows this
+  node already holds, and it never populates one it does not — otherwise
+  the cache grows back into the full replica this design replaced.
   """
 
   use ExUnit.Case, async: false
 
+  alias Smolsqls.ControlPlane.{Database, DatabaseToken}
   alias Smolsqls.ReadModel
+  alias Smolsqls.Wait
 
   setup_all do
     conn = start_raw_conn!()
@@ -43,17 +50,63 @@ defmodule Smolsqls.ReadModel.ReplicationTest do
       GenServer.stop(cleanup)
     end)
 
-    start_supervised!({ReadModel, snapshot: false})
+    start_supervised!({ReadModel, probe: fn -> :ok end, sweep_interval_ms: 60_000})
     start_supervised!(Smolsqls.ReadModel.Replication)
 
     %{conn: conn, tenant_id: tenant_id, database_id: database_id}
   end
 
-  test "insert, update, and delete flow from the WAL into ETS",
+  test "updates and deletes flow from the WAL; inserts never populate",
        %{conn: conn, tenant_id: tenant_id, database_id: database_id} do
-    api_key = "sk_repl_#{System.unique_integer([:positive])}"
     token = "tok_repl_#{System.unique_integer([:positive])}"
+    token_hash = Smolsqls.Secrets.hash(token)
 
+    insert_tenant(conn, tenant_id)
+    insert_database(conn, database_id, tenant_id)
+    insert_token(conn, database_id, token, token_hash)
+
+    :ok = ReadModel.put(:databases, %Database{id: database_id, tenant_id: tenant_id})
+
+    Postgrex.query!(
+      conn,
+      "UPDATE databases SET node = 'claimed@somewhere', updated_at = now() WHERE id = $1::uuid",
+      [Ecto.UUID.dump!(database_id)]
+    )
+
+    Wait.until(fn ->
+      match?({:ok, %{node: "claimed@somewhere"}}, ReadModel.peek(:databases, database_id))
+    end)
+
+    assert ReadModel.peek(:database_tokens, token_hash) == :absent
+    assert ReadModel.peek(:tenants, tenant_id) == :absent
+
+    :ok =
+      ReadModel.put(:database_tokens, %DatabaseToken{
+        id: Ecto.UUID.generate(),
+        database_id: database_id,
+        token_hash: token_hash,
+        enabled: true
+      })
+
+    Postgrex.query!(
+      conn,
+      "UPDATE database_tokens SET enabled = false, updated_at = now() WHERE token_hash = $1",
+      [token_hash]
+    )
+
+    Wait.until(fn ->
+      match?({:ok, %{enabled: false}}, ReadModel.peek(:database_tokens, token_hash))
+    end)
+
+    Postgrex.query!(conn, "DELETE FROM databases WHERE id = $1::uuid", [
+      Ecto.UUID.dump!(database_id)
+    ])
+
+    Wait.until(fn -> ReadModel.peek(:databases, database_id) == :missing end)
+    Wait.until(fn -> ReadModel.peek(:database_tokens, token_hash) == :missing end)
+  end
+
+  defp insert_tenant(conn, tenant_id) do
     Postgrex.query!(
       conn,
       """
@@ -62,27 +115,9 @@ defmodule Smolsqls.ReadModel.ReplicationTest do
       """,
       [Ecto.UUID.dump!(tenant_id), "repl-#{System.unique_integer([:positive])}"]
     )
+  end
 
-    Postgrex.query!(
-      conn,
-      """
-      INSERT INTO tenant_api_keys
-        (id, tenant_id, token_hash, token_ciphertext, enabled, inserted_at, updated_at)
-      VALUES (gen_random_uuid(), $1::uuid, $2, $3, true, now(), now())
-      """,
-      [
-        Ecto.UUID.dump!(tenant_id),
-        Smolsqls.Secrets.hash(api_key),
-        Smolsqls.Secrets.encrypt(api_key)
-      ]
-    )
-
-    wait_until(fn ->
-      ReadModel.get_tenant_api_key_by_hash(Smolsqls.Secrets.hash(api_key)) != nil
-    end)
-
-    assert ReadModel.get_tenant(tenant_id).name == "Repl Org"
-
+  defp insert_database(conn, database_id, tenant_id) do
     Postgrex.query!(
       conn,
       """
@@ -91,9 +126,9 @@ defmodule Smolsqls.ReadModel.ReplicationTest do
       """,
       [Ecto.UUID.dump!(database_id), Ecto.UUID.dump!(tenant_id)]
     )
+  end
 
-    token_hash = Smolsqls.Secrets.hash(token)
-
+  defp insert_token(conn, database_id, token, token_hash) do
     Postgrex.query!(
       conn,
       """
@@ -103,40 +138,6 @@ defmodule Smolsqls.ReadModel.ReplicationTest do
       """,
       [Ecto.UUID.dump!(database_id), token_hash, Smolsqls.Secrets.encrypt(token)]
     )
-
-    wait_until(fn -> ReadModel.get_database(database_id) != nil end)
-    wait_until(fn -> ReadModel.get_database_token_by_hash(token_hash) != nil end)
-
-    found = ReadModel.get_database_token_by_hash(token_hash)
-    assert found.database_id == database_id
-    assert found.enabled
-
-    Postgrex.query!(
-      conn,
-      "UPDATE databases SET node = 'claimed@somewhere', updated_at = now() WHERE id = $1::uuid",
-      [Ecto.UUID.dump!(database_id)]
-    )
-
-    wait_until(fn ->
-      match?(%{node: "claimed@somewhere"}, ReadModel.get_database(database_id))
-    end)
-
-    Postgrex.query!(
-      conn,
-      "UPDATE database_tokens SET enabled = false, updated_at = now() WHERE token_hash = $1",
-      [token_hash]
-    )
-
-    wait_until(fn ->
-      match?(%{enabled: false}, ReadModel.get_database_token_by_hash(token_hash))
-    end)
-
-    Postgrex.query!(conn, "DELETE FROM databases WHERE id = $1::uuid", [
-      Ecto.UUID.dump!(database_id)
-    ])
-
-    wait_until(fn -> ReadModel.get_database(database_id) == nil end)
-    wait_until(fn -> ReadModel.get_database_token_by_hash(token_hash) == nil end)
   end
 
   defp start_raw_conn! do
@@ -146,18 +147,5 @@ defmodule Smolsqls.ReadModel.ReplicationTest do
 
     {:ok, conn} = Postgrex.start_link(config)
     conn
-  end
-
-  defp wait_until(fun, attempts \\ 400)
-
-  defp wait_until(fun, 0), do: assert(fun.())
-
-  defp wait_until(fun, attempts) do
-    if fun.() do
-      :ok
-    else
-      Process.sleep(25)
-      wait_until(fun, attempts - 1)
-    end
   end
 end

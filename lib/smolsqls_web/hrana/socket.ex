@@ -43,10 +43,18 @@ defmodule SmolsqlsWeb.Hrana.Socket do
   defp handle_message(%{"type" => "hello"} = message, state) do
     token = message["jwt"]
 
-    case token && ControlPlane.authenticate_database_by_token(token) do
-      {:ok, database} ->
-        limits = Smolsqls.Limits.resolve(database)
-        reply(%{type: "hello_ok"}, %{state | database: database, limits: limits})
+    with true <- is_binary(token),
+         {:ok, database} <- ControlPlane.authenticate_database_by_token(token),
+         {:ok, limits} <- Smolsqls.Limits.resolve(database) do
+      reply(%{type: "hello_ok"}, %{state | database: database, limits: limits})
+    else
+      {:error, :metadb_unavailable} ->
+        {_status, code, message} = SmolsqlsWeb.Api.ErrorCode.classify(:metadb_unavailable)
+
+        reply(
+          %{type: "hello_error", error: %{message: message, code: String.upcase(code)}},
+          state
+        )
 
       _ ->
         reply(
