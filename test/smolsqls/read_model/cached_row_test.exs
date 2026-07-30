@@ -86,6 +86,24 @@ defmodule Smolsqls.ReadModel.CachedRowTest do
     assert CachedRow.narrow(:databases, stored) == stored
   end
 
+  test "write-through clears the virtual plaintext token the create path carries" do
+    tenant = tenant_fixture()
+    hash = Smolsqls.Secrets.hash(tenant.api_key)
+    created = %{Repo.get_by!(TenantApiKey, token_hash: hash) | token: tenant.api_key}
+
+    assert is_nil(CachedRow.narrow(:tenant_api_keys, created).token)
+
+    database = database_fixture(tenant)
+    db_hash = Smolsqls.Secrets.hash(database.auth_token)
+
+    created_token = %{
+      Repo.get_by!(DatabaseToken, token_hash: db_hash)
+      | token: database.auth_token
+    }
+
+    assert is_nil(CachedRow.narrow(:database_tokens, created_token).token)
+  end
+
   defp fill_database(database, source) do
     now = DateTime.utc_now()
 

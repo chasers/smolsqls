@@ -9,18 +9,24 @@ defmodule Smolsqls.ReadModel.CachedRow do
   reads) saved memory the working-set cache no longer needs to save, and
   cost every reader an invisible rule about which fields might be `nil`.
 
-  The one exception is `token_ciphertext` on the credential tables. It
-  decrypts to a live secret, nothing on a cached path reads it (`reveal`
-  goes to Postgres), and caching it would leave the secret in ETS on every
-  node that ever authenticated that token — and in any crash dump taken
-  there. It is excluded from the publication too, so it never enters the
-  replication stream.
+  The one exception is the credentials on the credential tables:
+  `token_ciphertext` decrypts to a live secret, and the virtual `token`
+  field *is* the plaintext secret on the create path. Nothing on a cached
+  path reads either (`reveal` goes to Postgres), and caching them would
+  leave the secret in ETS on every node that ever created or
+  authenticated that token — and in any crash dump taken there.
+  `token_ciphertext` is excluded from the publication too, so it never
+  enters the replication stream; `token` is virtual and never leaves the
+  creating process except through the create response.
 
   Cached rows are still **read-only**: an entry can be stale, so writes go
   to Postgres by id rather than re-writing a whole row from cache.
   """
 
-  @redacted %{database_tokens: [:token_ciphertext], tenant_api_keys: [:token_ciphertext]}
+  @redacted %{
+    database_tokens: [:token, :token_ciphertext],
+    tenant_api_keys: [:token, :token_ciphertext]
+  }
 
   @doc """
   The fields the cache holds for a table — all of the schema's, minus any
