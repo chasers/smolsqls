@@ -11,6 +11,7 @@
 
 CREATE TABLE IF NOT EXISTS projects (
   id          INTEGER PRIMARY KEY,
+  key         TEXT GENERATED ALWAYS AS ('P-' || id) VIRTUAL,
   slug        TEXT NOT NULL UNIQUE,
   name        TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
@@ -21,6 +22,7 @@ CREATE TABLE IF NOT EXISTS projects (
 
 CREATE TABLE IF NOT EXISTS plans (
   id          INTEGER PRIMARY KEY,
+  key         TEXT GENERATED ALWAYS AS ('PL-' || id) VIRTUAL,
   project_id  INTEGER NOT NULL REFERENCES projects(id),
   slug        TEXT NOT NULL UNIQUE,
   title       TEXT NOT NULL,
@@ -32,6 +34,7 @@ CREATE TABLE IF NOT EXISTS plans (
 
 CREATE TABLE IF NOT EXISTS tasks (
   id           INTEGER PRIMARY KEY,
+  key          TEXT GENERATED ALWAYS AS ('T-' || id) VIRTUAL,
   project_id   INTEGER NOT NULL REFERENCES projects(id),
   plan_id      INTEGER REFERENCES plans(id),
   title        TEXT NOT NULL,

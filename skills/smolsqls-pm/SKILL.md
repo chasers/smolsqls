@@ -37,6 +37,14 @@ through the shared Elixir tool `skills/query-db/smolsqls_query.exs` (see the
 | plan | `draft` · `active` · `done` · `superseded` |
 | task | `todo` · `in_progress` · `blocked` · `done` · `cancelled` (priority `low`/`med`/`high`/`urgent`) |
 
+## Display keys — how to reference rows outside the tracker
+
+Every row has a generated `key` column: tasks are `T-<id>`, projects `P-<id>`,
+plans `PL-<id>`. **Always use the key — never a bare `#<id>` — when referencing
+tracker items in GitHub PR descriptions, commit messages, or issues**: GitHub
+autolinks `#55` to its own PR/issue 55. Keys work in queries too
+(`WHERE key = 'T-137'`), and SQL can still use integer `id`s internally.
+
 ## Credentials — from the environment, never committed
 
 The query tool reads a **dedicated** database's creds from the environment,
@@ -77,7 +85,7 @@ transaction control).
 
 ```sh
 # What's on my plate — open tasks across active projects, highest priority first
-pmq "SELECT p.slug, t.status, t.priority, t.title
+pmq "SELECT t.key, p.slug, t.status, t.priority, t.title
        FROM tasks t JOIN projects p ON p.id = t.project_id
       WHERE t.status IN (?, ?) AND p.status = ?
       ORDER BY CASE t.priority WHEN ?4 THEN 0 WHEN ?5 THEN 1 WHEN ?6 THEN 2 ELSE 3 END,
@@ -99,18 +107,18 @@ jq -nc --arg p tenant-sql-hardening --arg s 2026-07-06-authorizer \
 pmq "INSERT INTO plans (project_id, slug, title, body_md, status)
      VALUES ((SELECT id FROM projects WHERE slug = ?), ?, ?, ?, ?)" --args-file /tmp/plan_args.json
 
-# Add a task (optionally linked to a plan)
+# Add a task (optionally linked to a plan) — the returned key is what you cite in PRs
 pmq "INSERT INTO tasks (project_id, plan_id, title, priority)
      VALUES ((SELECT id FROM projects WHERE slug = ?),
-             (SELECT id FROM plans   WHERE slug = ?), ?, ?) RETURNING id" \
+             (SELECT id FROM plans   WHERE slug = ?), ?, ?) RETURNING id, key" \
     --args '["tenant-sql-hardening","2026-07-06-authorizer","Wrap query/describe/sequence","high"]'
 
-# Move a task; marking done stamps completed_at
+# Move a task (by key or integer id); marking done stamps completed_at
 pmq "UPDATE tasks
         SET status = ?,
             completed_at = CASE WHEN ? = 'done' THEN datetime('now') ELSE completed_at END,
             updated_at = datetime('now')
-      WHERE id = ?" --args '["done","done",1]'
+      WHERE key = ?" --args '["done","done","T-1"]'
 
 # Read a plan's markdown
 pmq "SELECT body_md FROM plans WHERE slug = ?" --args '["2026-07-06-authorizer"]'
