@@ -334,6 +334,33 @@ defmodule Smolsqls.ReadModelTest do
       :ok = ReadModel.replace_if_cached(:databases, db)
       assert ReadModel.peek(:databases, db.id) == {:ok, db}
     end
+
+    test "a feed insert racing the load answers with the row, not a fabricated miss" do
+      db = database()
+
+      task = reader(:databases, db.id)
+      assert_receive {:fetch, :databases, _key, fetcher}
+
+      :ok = ReadModel.replace_if_cached(:databases, db)
+      send(fetcher, {:return, {:error, :not_found}})
+
+      assert Task.await(task) == {:ok, db}
+      assert ReadModel.peek(:databases, db.id) == {:ok, db}
+    end
+
+    test "a feed update racing the load wins over the load's stale row" do
+      db = database(%{node: "stale@node"})
+      fresh = %{db | node: "fresh@node"}
+
+      task = reader(:databases, db.id)
+      assert_receive {:fetch, :databases, _key, fetcher}
+
+      :ok = ReadModel.replace_if_cached(:databases, fresh)
+      send(fetcher, {:return, {:ok, db}})
+
+      assert {:ok, %{node: "fresh@node"}} = Task.await(task)
+      assert ReadModel.peek(:databases, db.id) == {:ok, fresh}
+    end
   end
 
   describe "the WAL feed never populates" do

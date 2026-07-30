@@ -41,11 +41,13 @@ of this cache held only the columns the query path read; it saved memory a
 working-set cache does not need to save, and charged every reader an invisible
 rule about which fields might be `nil`.
 
-The one exception is `token_ciphertext`. It decrypts to a live secret, nothing on
-a cached path reads it (`reveal` goes to Postgres), and caching it would leave
-the secret in ETS on every node that ever authenticated that token — and in any
-crash dump taken there. It is left out of the publication too, so it never enters
-the replication stream. `Smolsqls.ReadModel.CachedRow` owns that one exclusion.
+The one exception is the credentials themselves: `token_ciphertext` decrypts to
+a live secret, and the virtual `token` field *is* the plaintext on the create
+path. Nothing on a cached path reads either (`reveal` goes to Postgres), and
+caching them would leave the secret in ETS on every node that ever created or
+authenticated that token — and in any crash dump taken there. `token_ciphertext`
+is left out of the publication too, so it never enters the replication stream.
+`Smolsqls.ReadModel.CachedRow` owns those exclusions.
 
 Cached rows are still **read-only**: an entry can be stale, so writes go to
 Postgres by id. That is why `ControlPlane.mark_placed/3` takes an id and updates
@@ -109,7 +111,7 @@ so that is enforced rather than conventional.
 | source | rule |
 |---|---|
 | local control-plane mutation (`put/2`) | caches unconditionally — the row was just written here and is about to be read back |
-| WAL feed (`replace_if_cached/2`) | replaces the row **only if this node already holds the key**, so remote changes can never grow the cache back into a full replica. A held negative entry counts as held, so a create is not shadowed by a cached miss |
+| WAL feed (`replace_if_cached/2`) | replaces the row **only if this node already holds the key or is actively loading it**, so remote changes can never grow the cache toward a full replica. A held negative entry counts as held, so a create is not shadowed by a cached miss; a key with a load in flight counts too, so a feed insert racing that load answers the waiters with the row rather than fabricating a miss |
 | delete, from either source | always applies, leaving a negative entry where one was held. This is how a revocation propagates immediately to every node caching the token |
 
 ### The mutation-during-load race

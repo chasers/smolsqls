@@ -10,10 +10,11 @@ defmodule Smolsqls.ReadModel do
   Postgres remains the source of truth. Entries arrive three ways: a
   read-through load on a miss, write-through from a local control-plane
   mutation, and the WAL feed (`Smolsqls.ReadModel.Replication`) for
-  changes made on other nodes. The feed only *updates rows already
-  held* — it never populates — so it cannot grow the cache back into a
-  full replica; deletes always apply, so a revocation propagates
-  immediately to every node holding the token.
+  changes made on other nodes. The feed only *updates rows already held
+  or actively being loaded* — it never populates an unwanted key — so it
+  cannot grow the cache back into a full replica; deletes always apply,
+  so a revocation propagates immediately to every node holding the
+  token.
 
   `collapsed` counts reads that avoided a redundant metadb query — by
   joining an in-flight load, or by finding the row already cached when
@@ -163,7 +164,10 @@ defmodule Smolsqls.ReadModel do
   WAL feed apply: replaces the row only if this node already holds an
   entry for its key, so remote changes never populate the cache. A held
   negative entry counts as held, so a create arriving for a key cached
-  as missing replaces it.
+  as missing replaces it. A key with a load in flight also counts as
+  held — demand is proven, and the feed row is what the load's discarded
+  result would be answered from; without it the discard would fabricate
+  a negative entry for a row the feed just proved exists.
   """
   @spec replace_if_cached(table(), struct()) :: :ok
   def replace_if_cached(table, row) do
@@ -320,7 +324,10 @@ defmodule Smolsqls.ReadModel do
   end
 
   def handle_call({:replace_if_cached, table, key, row}, _from, state) do
-    replace_if_present(table, key, {:ok, row})
+    if peek(table, key) != :absent or Map.has_key?(state.inflight, {table, key}) do
+      insert(table, key, {:ok, row})
+    end
+
     {:reply, :ok, invalidate(state, table, key)}
   end
 
