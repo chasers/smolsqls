@@ -13,10 +13,14 @@ defmodule Smolsqls.ReadModel.Replication do
   on every node caching it.
 
   If Postgres reports the slot missing or invalidated — the WAL it needed
-  is gone, so deletes have been lost — the cache is flushed and the slot
-  recreated. Flushing rather than resnapshotting is the whole benefit of
-  a cache: correctness costs one drop, and the read-through path refills
-  what is still being used.
+  is gone, so deletes have been lost — the slot is recreated and the
+  cache flushed. Strictly in that order: the flush repopulates through
+  read-throughs immediately, so the new slot must already exist to
+  capture any delete that follows — flushing first would leave a window
+  where a row is cached and its delete falls between the two slots,
+  keeping it alive for a full TTL. Flushing rather than resnapshotting
+  is the whole benefit of a cache: correctness costs one drop, and the
+  read-through path refills what is still being used.
   """
 
   use Postgrex.ReplicationConnection
@@ -66,7 +70,12 @@ defmodule Smolsqls.ReadModel.Replication do
   end
 
   def handle_result(results, %{step: :drop_slot} = state) when is_list(results) do
-    {:query, create_slot_query(state), %{state | step: :create_slot}}
+    {:query, create_slot_query(state), %{state | step: :recreate_slot}}
+  end
+
+  def handle_result(results, %{step: :recreate_slot} = state) when is_list(results) do
+    ReadModel.flush(:slot_invalidated)
+    start_streaming(state)
   end
 
   def handle_result(
@@ -76,10 +85,24 @@ defmodule Smolsqls.ReadModel.Replication do
     start_streaming(state)
   end
 
-  def handle_result(%Postgrex.Error{postgres: %{code: code}} = error, state)
-      when code in @invalidated_codes do
-    Logger.error("read model slot #{state.slot} unusable: #{Exception.message(error)}")
+  def handle_result(
+        %Postgrex.Error{postgres: %{code: :duplicate_object}},
+        %{step: :recreate_slot} = state
+      ) do
     ReadModel.flush(:slot_invalidated)
+    start_streaming(state)
+  end
+
+  def handle_result(
+        %Postgrex.Error{postgres: %{code: :undefined_object}},
+        %{step: :drop_slot} = state
+      ) do
+    {:query, create_slot_query(state), %{state | step: :recreate_slot}}
+  end
+
+  def handle_result(%Postgrex.Error{postgres: %{code: code}} = error, state)
+      when code in @invalidated_codes and state.step != :drop_slot do
+    Logger.error("read model slot #{state.slot} unusable: #{Exception.message(error)}")
 
     {:query, "DROP_REPLICATION_SLOT #{state.slot} WAIT", %{state | step: :drop_slot}}
   end

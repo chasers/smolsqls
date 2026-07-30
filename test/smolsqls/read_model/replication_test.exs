@@ -20,6 +20,7 @@ defmodule Smolsqls.ReadModel.ReplicationTest do
 
   alias Smolsqls.ControlPlane.{Database, DatabaseToken, TenantApiKey}
   alias Smolsqls.ReadModel
+  alias Smolsqls.ReadModel.Replication
   alias Smolsqls.Wait
 
   setup_all do
@@ -137,6 +138,49 @@ defmodule Smolsqls.ReadModel.ReplicationTest do
     Postgrex.query!(conn, "DELETE FROM tenant_api_keys WHERE token_hash = $1", [key_hash])
 
     Wait.until(fn -> ReadModel.peek(:tenant_api_keys, key_hash) == :missing end)
+  end
+
+  describe "slot invalidation recovery" do
+    test "recreates the slot before flushing, so the flush repopulates under a live slot" do
+      db = %Database{id: Ecto.UUID.generate(), tenant_id: Ecto.UUID.generate(), status: :active}
+      :ok = ReadModel.put(:databases, db)
+
+      state = %{slot: "smolsqls_recovery_test", step: :streaming, relations: %{}, last_lsn: 0}
+
+      assert {:query, "DROP_REPLICATION_SLOT " <> _, %{step: :drop_slot} = dropped} =
+               Replication.handle_result(invalidated_error(), state)
+
+      assert ReadModel.peek(:databases, db.id) == {:ok, db}
+
+      assert {:query, "CREATE_REPLICATION_SLOT" <> _, %{step: :recreate_slot} = created} =
+               Replication.handle_result([], dropped)
+
+      assert ReadModel.peek(:databases, db.id) == {:ok, db}
+
+      assert {:stream, "START_REPLICATION" <> _, [], %{step: :streaming}} =
+               Replication.handle_result([], created)
+
+      assert ReadModel.peek(:databases, db.id) == :absent
+    end
+
+    test "a drop finding the slot already gone proceeds to recreate instead of looping" do
+      state = %{slot: "smolsqls_recovery_test", step: :drop_slot, relations: %{}, last_lsn: 0}
+
+      assert {:query, "CREATE_REPLICATION_SLOT" <> _, %{step: :recreate_slot}} =
+               Replication.handle_result(invalidated_error(), state)
+    end
+
+    defp invalidated_error do
+      %Postgrex.Error{
+        postgres: %{
+          code: :undefined_object,
+          message: "replication slot does not exist",
+          severity: "ERROR",
+          pg_code: "42704",
+          unknown: "ERROR"
+        }
+      }
+    end
   end
 
   defp insert_tenant(conn, tenant_id) do

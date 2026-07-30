@@ -190,9 +190,12 @@ instead. Both credential tables use `REPLICA IDENTITY USING INDEX
 every node would need an id-to-hash index just to apply a revocation.
 
 If Postgres reports the slot missing or invalidated, the WAL it needed is gone
-and deletes have been lost, so the cache is **flushed** and the slot recreated.
-Flushing rather than re-snapshotting is the payoff of a cache: correctness costs
-one drop, and the read-through path refills whatever is still in use.
+and deletes have been lost, so the slot is recreated and then the cache
+**flushed** — strictly in that order, because the flush repopulates through
+read-throughs immediately, and a delete landing before the new slot exists
+would never be streamed. Flushing rather than re-snapshotting is the payoff of
+a cache: correctness costs one drop, and the read-through path refills whatever
+is still in use.
 
 ## Configuration
 
