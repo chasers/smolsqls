@@ -39,6 +39,10 @@ defmodule SmolsqlsWeb.Layouts do
     default: nil,
     doc: "the current [scope](https://phoenix.hexdocs.pm/scopes.html)"
 
+  attr :logged_in?, :boolean,
+    default: false,
+    doc: "whether the session carries an API key; shows the Dashboard nav link"
+
   slot :inner_block, required: true
 
   def app(assigns) do
@@ -60,6 +64,13 @@ defmodule SmolsqlsWeb.Layouts do
           </a>
         </div>
         <nav class="flex items-center gap-4">
+          <a
+            :if={@logged_in?}
+            href={~p"/dashboard"}
+            class="text-sm text-base-content/60 transition-colors hover:text-base-content"
+          >
+            Dashboard
+          </a>
           <a
             href={github_url()}
             target="_blank"

@@ -6,10 +6,11 @@ defmodule SmolsqlsWeb.HomeLive do
   """
   use SmolsqlsWeb, :live_view
 
-  def mount(_params, _session, socket) do
+  def mount(_params, session, socket) do
     {:ok,
      socket
      |> assign(:page_title, "Multitenant SQLite")
+     |> assign(:logged_in?, is_binary(session["api_key"]))
      |> assign(:limits, platform_limits())}
   end
 
