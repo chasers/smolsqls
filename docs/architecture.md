@@ -70,6 +70,38 @@ walks its data volume and claims any database whose file is local but whose
 record points elsewhere — the volume, not the node name, is the source of truth
 for placement.
 
+### Query routing
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant E as Edge (any node)
+    participant R as Router
+    participant O as Owning node
+    participant S as Database.Server
+    participant Q as SQLite
+
+    C->>E: SQL + auth token
+    E->>E: authenticate + resolve limits (read model)
+    E->>E: rate limit, reject BEGIN/COMMIT/…
+    E->>R: DataPlane.query(db_id, sql, args)
+    R->>R: syn lookup — who owns db?
+    alt hot, local
+        R->>S: GenServer.call
+    else hot, remote
+        R->>O: gen_rpc → local_op
+        O->>S: GenServer.call
+    else cold (no server anywhere)
+        R->>O: activate on placed node
+        O->>O: restore file from S3 if missing/stale
+        O->>S: start server, GenServer.call
+    end
+    S->>Q: prepare(sql), bind(args), step
+    Q-->>S: columns · rows · changes
+    S-->>C: result
+```
+
 ## Storage portability
 
 S3 is the source of truth for cold databases; node volumes are caches. When a
