@@ -65,7 +65,8 @@ defmodule Smolsqls.Limits do
   def resolve(database, nil) do
     case lookup_tenant(database) do
       {:ok, tenant} -> {:ok, build(database, tenant)}
-      {:error, :not_found} -> {:ok, build(database, nil)}
+      {:error, :no_tenant} -> {:ok, build(database, nil)}
+      {:error, :not_found} -> {:error, :metadb_unavailable}
       {:error, :metadb_unavailable} = error -> error
     end
   end
@@ -109,5 +110,5 @@ defmodule Smolsqls.Limits do
     Smolsqls.ControlPlane.lookup_tenant(tenant_id)
   end
 
-  defp lookup_tenant(_database), do: {:error, :not_found}
+  defp lookup_tenant(_database), do: {:error, :no_tenant}
 end

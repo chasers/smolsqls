@@ -41,6 +41,20 @@ defmodule Smolsqls.LimitsTest do
       assert {:ok, %{query_timeout_ms: 1_234}} = Limits.resolve(database)
     end
 
+    test "a tenant that cannot be resolved fails retryably instead of defaulting" do
+      database = %ControlPlane.Database{
+        id: Ecto.UUID.generate(),
+        tenant_id: Ecto.UUID.generate()
+      }
+
+      assert {:error, :metadb_unavailable} = Limits.resolve(database)
+    end
+
+    test "a database carrying no tenant resolves cluster defaults" do
+      assert {:ok, resolved} = Limits.resolve(%ControlPlane.Database{id: Ecto.UUID.generate()})
+      assert resolved.max_size_bytes == 1_073_741_824
+    end
+
     test "ignores unknown keys" do
       tenant = tenant_fixture()
 
