@@ -69,7 +69,7 @@ defmodule Smolsqls.DataPlane.Fence do
 
   defp misplaced?(database_id, self_name) do
     case ControlPlane.lookup_database(database_id) do
-      %Database{node: node} when is_binary(node) -> node != self_name
+      {:ok, %Database{node: node}} when is_binary(node) -> node != self_name
       _ -> false
     end
   end

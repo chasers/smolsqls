@@ -8,6 +8,7 @@ defmodule SmolsqlsWeb.Api.AuthPlug do
   import Phoenix.Controller, only: [json: 2]
 
   alias Smolsqls.ControlPlane
+  alias SmolsqlsWeb.Api.ErrorCode
 
   def init(opts), do: opts
 
@@ -16,6 +17,14 @@ defmodule SmolsqlsWeb.Api.AuthPlug do
          {:ok, tenant} <- ControlPlane.authenticate_tenant(api_key) do
       assign(conn, :current_tenant, tenant)
     else
+      {:error, :metadb_unavailable} ->
+        {status, code, message} = ErrorCode.classify(:metadb_unavailable)
+
+        conn
+        |> put_status(status)
+        |> json(%{error: %{code: code, message: message}})
+        |> halt()
+
       _ ->
         conn
         |> put_status(:unauthorized)

@@ -81,11 +81,11 @@ defmodule Smolsqls.DataPlane.Router do
   defp classify(_result), do: :error
 
   defp activate_and_dispatch(database_id, op, timeout) do
-    with %ControlPlane.Database{} = database <- ControlPlane.lookup_database(database_id),
+    with {:ok, %ControlPlane.Database{} = database} <- ControlPlane.lookup_database(database_id),
          {:ok, pid} <- Smolsqls.DataPlane.activate_database(database) do
       {node(pid), dispatch(node(pid), database_id, op, timeout)}
     else
-      nil -> {nil, {:error, :database_not_running}}
+      {:error, :not_found} -> {nil, {:error, :database_not_running}}
       {:error, reason} -> {nil, {:error, reason}}
     end
   end

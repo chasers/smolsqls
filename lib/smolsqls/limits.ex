@@ -3,9 +3,15 @@ defmodule Smolsqls.Limits do
   Per-tenant/per-database limits. Limits are rows, not config: the
   `limits` map on `databases` overrides the one on `tenants`, which
   overrides the cluster defaults from `config :smolsqls, Smolsqls.Limits`.
-  Both maps ride the read model, so resolution at the protocol edge
-  and at activation is ETS-only. Changes take effect on the next
+  Both maps ride the read-model cache, so resolution at the protocol
+  edge and at activation is usually ETS-only; a tenant this node has not
+  seen recently costs one Postgres read. Changes take effect on the next
   activation (or next request, for edge limits).
+
+  `resolve/2` fails with `{:error, :metadb_unavailable}` when the tenant
+  is neither cached nor readable. Falling back to cluster defaults would
+  silently *raise* a database's `max_size_bytes`, so an unknown tenant
+  is a retryable error rather than a quiet substitution.
 
   Known keys (string keys in the stored maps):
 
@@ -50,10 +56,22 @@ defmodule Smolsqls.Limits do
           max_hot_ms: pos_integer() | nil
         }
 
-  @spec resolve(Database.t() | nil, Tenant.t() | nil) :: t()
-  def resolve(database, tenant \\ nil) do
-    tenant = tenant || lookup_tenant(database)
+  @spec resolve(Database.t() | nil, Tenant.t() | nil) ::
+          {:ok, t()} | {:error, :metadb_unavailable}
+  def resolve(database, tenant \\ nil)
 
+  def resolve(database, %Tenant{} = tenant), do: {:ok, build(database, tenant)}
+
+  def resolve(database, nil) do
+    case lookup_tenant(database) do
+      {:ok, tenant} -> {:ok, build(database, tenant)}
+      {:error, :no_tenant} -> {:ok, build(database, nil)}
+      {:error, :not_found} -> {:error, :metadb_unavailable}
+      {:error, :metadb_unavailable} = error -> error
+    end
+  end
+
+  defp build(database, tenant) do
     Map.new(@keys, fn key -> {key, resolve_key(key, database, tenant)} end)
   end
 
@@ -92,5 +110,5 @@ defmodule Smolsqls.Limits do
     Smolsqls.ControlPlane.lookup_tenant(tenant_id)
   end
 
-  defp lookup_tenant(_database), do: nil
+  defp lookup_tenant(_database), do: {:error, :no_tenant}
 end

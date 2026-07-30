@@ -38,7 +38,13 @@ defmodule Smolsqls.DataPlane do
 
     with {:ok, _pid} <-
            Supervisor.start_database(database.id, file_path, database: server_database) do
-      ControlPlane.mark_placed(database, Node.self(), file_path)
+      mark_placed(database, file_path)
+    end
+  end
+
+  defp mark_placed(%Database{} = database, file_path) do
+    with {:ok, placed} <- ControlPlane.mark_placed(database.id, Node.self(), file_path) do
+      {:ok, %{placed | auth_token: database.auth_token}}
     end
   end
 
@@ -137,7 +143,7 @@ defmodule Smolsqls.DataPlane do
     with :ok <- ensure_local_file(server_database),
          {:ok, _pid} <-
            Supervisor.start_database(database.id, file_path, database: server_database) do
-      ControlPlane.mark_placed(database, Node.self(), file_path)
+      mark_placed(database, file_path)
     end
   end
 
@@ -341,12 +347,12 @@ defmodule Smolsqls.DataPlane do
 
   @spec push_limits_locally(Database.t()) :: :ok | {:error, term()}
   def push_limits_locally(%Database{} = database) do
-    case Registry.whereis(database.id) do
-      pid when is_pid(pid) ->
-        Smolsqls.DataPlane.Database.Server.set_limits(pid, Smolsqls.Limits.resolve(database))
-
-      :undefined ->
-        :ok
+    with pid when is_pid(pid) <- Registry.whereis(database.id),
+         {:ok, limits} <- Smolsqls.Limits.resolve(database) do
+      Smolsqls.DataPlane.Database.Server.set_limits(pid, limits)
+    else
+      :undefined -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 

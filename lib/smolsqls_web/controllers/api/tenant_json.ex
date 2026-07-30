@@ -1,16 +1,16 @@
 defmodule SmolsqlsWeb.Api.TenantJSON do
   alias Smolsqls.ControlPlane.Tenant
 
-  def show(%{tenant: tenant, include_api_key: include_api_key}) do
-    %{data: data(tenant, include_api_key)}
+  def show(%{tenant: tenant, limits: limits, include_api_key: include_api_key}) do
+    %{data: data(tenant, limits, include_api_key)}
   end
 
-  defp data(%Tenant{} = tenant, include_api_key) do
+  defp data(%Tenant{} = tenant, limits, include_api_key) do
     base = %{
       id: tenant.id,
       name: tenant.name,
       slug: tenant.slug,
-      limits: Smolsqls.Limits.resolve(nil, tenant),
+      limits: limits,
       created_at: tenant.inserted_at
     }
 

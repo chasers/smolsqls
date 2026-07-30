@@ -15,6 +15,11 @@ defmodule SmolsqlsWeb.SessionController do
         conn
         |> put_flash(:error, "Invalid API key")
         |> redirect(to: ~p"/")
+
+      {:error, :metadb_unavailable} ->
+        conn
+        |> put_flash(:error, "Sign-in is temporarily unavailable — try again shortly")
+        |> redirect(to: ~p"/")
     end
   end
 

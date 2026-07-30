@@ -45,12 +45,23 @@ flowchart TB
 ## Control plane
 
 Postgres-backed: tenants, databases, auth tokens, and placement decisions.
-Postgres is the source of truth for writes but never sits on the query path:
-every node keeps a **full ETS replica** of the request-path tables, bootstrapped
-with `COPY` at startup and kept current by streaming the WAL over a per-node
-permanent logical replication slot (`Postgrex.ReplicationConnection` + a minimal
-pgoutput decoder). Postgres downtime pauses create/delete; queries and auth keep
-working.
+Postgres is the source of truth for writes but rarely sits on the query path:
+each node keeps a **bounded cache** (`Smolsqls.ReadModel`) of the request-path
+rows in ETS — whole rows, but only the ones that node has recently been asked
+for, so memory scales with its working set instead of the size of the fleet. A hit is one ETS lookup and never writes; a miss reads one row
+from Postgres; changes made on other nodes arrive over a per-node permanent
+logical replication slot and update rows a node already holds without ever
+populating new ones.
+
+The upshot for availability: **a query for a database used recently keeps working
+while Postgres is down**, and a cold one gets a retryable 503 rather than
+anything resembling an auth failure. Management auth is cached too, but the
+management API and dashboard still fail with Postgres — their endpoints query it
+for their own payloads.
+
+Full details — refresh-ahead, negative caching, eviction, the
+mutation-during-load race, and the metrics to alert on — are in
+[read-model-cache.md](read-model-cache.md).
 
 ## Data plane
 
@@ -172,13 +183,15 @@ no region and placement stays purely load-based.
 **Moving a database** to another region is a `PATCH /v1/databases/:id` with a new
 `region` (or the dashboard's Move action). The move ships the current state to the
 object store, marks the database `:moving` — a fence that makes every converged
-node refuse to activate its writer, so a stale read model can't revive it in the
+node refuse to activate its writer, so a stale cache entry can't revive it in the
 old region — then reassigns its placement to a node in the target region, which
 restores lazily. Queries racing the move get a retryable `database_relocating`
-(503). The fence is only as timely as the read model: the handling node updates
+(503). The fence is only as timely as the cache: the handling node updates
 synchronously, other region nodes converge over the WAL feed, so a query on a
 not-yet-converged node can still briefly reach the old owner (bounded by
-replication lag) — the same eventual-consistency window drains live with.
+replication lag) — the same eventual-consistency window drains live with. A node
+that is *not* caching the database has no stale entry to converge: it reads
+Postgres and sees the fence immediately.
 Connection strings return a **global** host (`PHX_HOST`, e.g.
 `alpha.daisy.smolsqls.com`) that a global load balancer geo-routes to the nearest
 region — any node transparently proxies a query to the owner — plus a **regional**
@@ -231,7 +244,10 @@ expose.
 Rows, not config: a `limits` map on `tenants` with per-database overrides on
 `databases`, falling back to cluster defaults
 (`config :smolsqls, Smolsqls.Limits`). Resolution is database → tenant → default,
-served from the read model. The set: `max_databases` (create time),
+served from the cache, costing one Postgres read for a tenant this node has not
+seen recently. If the tenant is neither cached nor readable, resolution fails
+retryably rather than falling back to cluster defaults — quietly defaulting would
+*raise* a database's effective `max_size_bytes`. The set: `max_databases` (create time),
 `max_size_bytes` (`PRAGMA max_page_count` at activation), `rate_limit_rps`
 (per-node fixed window at the protocol edge), `query_timeout_ms`,
 `statement_timeout_ms` (server-side `sqlite3_interrupt` of runaway statements),
@@ -244,7 +260,9 @@ Credentials are managed rows, not columns on the owner. A database holds any
 number of permanent tokens (`/v1/databases/:id/tokens`) and a tenant any number of
 API keys (`/v1/tenant/keys`) — create (optionally with `expires_at`),
 enable/disable (`PATCH {enabled: false}`), and delete, each independently;
-revocation propagates immediately through the read model. Creating a database or
+revocation propagates immediately over the WAL feed to every node caching the
+token, and a node that is not caching it reads Postgres and sees the change at
+once. Creating a database or
 tenant creates a `default` secret and returns it. At rest a secret is a SHA-256
 hash (the auth lookup key) plus an AES-256-GCM ciphertext (`TOKEN_ENCRYPTION_KEY`,
 falling back to `SECRET_KEY_BASE`) — never plaintext, never logged. Secrets appear

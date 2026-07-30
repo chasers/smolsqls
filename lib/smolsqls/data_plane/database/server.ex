@@ -167,7 +167,14 @@ defmodule Smolsqls.DataPlane.Database.Server do
   def init(opts) do
     database_id = Keyword.fetch!(opts, :database_id)
     file_path = Keyword.fetch!(opts, :file_path)
-    limits = Smolsqls.Limits.resolve(Keyword.get(opts, :database))
+
+    case Smolsqls.Limits.resolve(Keyword.get(opts, :database)) do
+      {:ok, limits} -> start_with_limits(database_id, file_path, limits, opts)
+      {:error, reason} -> {:stop, reason}
+    end
+  end
+
+  defp start_with_limits(database_id, file_path, limits, opts) do
     idle_ttl = Keyword.get(opts, :idle_ttl) || limits.idle_ttl_ms || default_idle_ttl()
 
     File.mkdir_p!(Path.dirname(file_path))

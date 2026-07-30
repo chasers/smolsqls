@@ -17,7 +17,11 @@ config :smolsqls,
   regions: [],
   default_region: nil
 
-config :smolsqls, Smolsqls.ReadModel, enabled: true
+config :smolsqls, Smolsqls.ReadModel,
+  enabled: true,
+  ttl_ms: :timer.hours(24),
+  negative_ttl_ms: :timer.seconds(30),
+  max_entries: 250_000
 
 config :smolsqls, Smolsqls.Limits,
   max_databases: 100,

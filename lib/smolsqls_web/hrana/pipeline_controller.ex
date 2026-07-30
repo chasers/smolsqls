@@ -24,10 +24,11 @@ defmodule SmolsqlsWeb.Hrana.PipelineController do
   def create(conn, params) do
     with {:ok, token} <- bearer_token(conn),
          {:ok, database} <- ControlPlane.authenticate_database_by_token(token),
-         :ok <- check_baton(params) do
+         :ok <- check_baton(params),
+         {:ok, limits} <- Smolsqls.Limits.resolve(database) do
       ctx = %{
         database: database,
-        limits: Smolsqls.Limits.resolve(database),
+        limits: limits,
         owner: self(),
         allow_transactions: true
       }
@@ -43,6 +44,13 @@ defmodule SmolsqlsWeb.Hrana.PipelineController do
         rollback_if_open(ctx)
       end
     else
+      {:error, :metadb_unavailable} ->
+        {status, _code, message} = SmolsqlsWeb.Api.ErrorCode.classify(:metadb_unavailable)
+
+        conn
+        |> put_status(status)
+        |> json(%{error: %{message: message}})
+
       {:error, :baton_unsupported} ->
         conn
         |> put_status(:bad_request)

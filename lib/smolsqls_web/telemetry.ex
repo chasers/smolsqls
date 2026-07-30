@@ -64,6 +64,40 @@ defmodule SmolsqlsWeb.Telemetry do
       ),
       counter("smolsqls.node_operation.count", tags: [:kind, :result]),
       counter("smolsqls.rate_limiter.rejected.count"),
+      last_value("smolsqls.read_model.entries.entries",
+        tags: [:table],
+        description: "Rows cached from the metadb on this node"
+      ),
+      last_value("smolsqls.read_model.entries.memory_bytes", tags: [:table]),
+      last_value("smolsqls.read_model.health.inflight",
+        description: "Read-model loads currently reading the metadb"
+      ),
+      last_value("smolsqls.read_model.health.stale",
+        description:
+          "1 while the metadb is unreachable: entry expiry is paused and " <>
+            "this node serves what it last loaded"
+      ),
+      last_value("smolsqls.read_model.counters.hits"),
+      last_value("smolsqls.read_model.counters.negative_hits"),
+      last_value("smolsqls.read_model.counters.misses",
+        description: "Cumulative cache misses — each one is a metadb read"
+      ),
+      last_value("smolsqls.read_model.counters.refreshes"),
+      last_value("smolsqls.read_model.counters.collapsed",
+        description: "Misses that joined an in-flight load instead of issuing their own read"
+      ),
+      last_value("smolsqls.read_model.counters.load_timeouts"),
+      last_value("smolsqls.read_model.counters.load_failures"),
+      last_value("smolsqls.read_model.counters.discarded",
+        description: "Loads discarded because the key was mutated while in flight"
+      ),
+      last_value("smolsqls.read_model.counters.expired"),
+      last_value("smolsqls.read_model.counters.evicted"),
+      sum("smolsqls.read_model.sweep.expired"),
+      sum("smolsqls.read_model.sweep.evicted"),
+      counter("smolsqls.read_model.load_discarded.count", tags: [:table]),
+      counter("smolsqls.read_model.load_failed.count", tags: [:table]),
+      counter("smolsqls.read_model.flushed.count", tags: [:reason]),
       counter("smolsqls.fence.stopped.count"),
       counter("smolsqls.syn.conflict_resolved.count"),
       sum("smolsqls.reconciler.claimed.count"),
@@ -144,7 +178,8 @@ defmodule SmolsqlsWeb.Telemetry do
 
   defp periodic_measurements do
     [
-      {Smolsqls.Telemetry, :emit_hot_servers, []}
+      {Smolsqls.Telemetry, :emit_hot_servers, []},
+      {Smolsqls.Telemetry, :emit_read_model, []}
     ]
   end
 

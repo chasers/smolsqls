@@ -13,7 +13,7 @@ defmodule Smolsqls.LimitsTest do
       tenant = tenant_fixture()
       database = database_fixture(tenant)
 
-      resolved = Limits.resolve(database, tenant)
+      assert {:ok, resolved} = Limits.resolve(database, tenant)
       assert resolved.max_size_bytes == 1_073_741_824
       assert resolved.query_timeout_ms == 30_000
       assert resolved.rate_limit_rps == nil
@@ -21,12 +21,12 @@ defmodule Smolsqls.LimitsTest do
       tenant =
         tenant |> Ecto.Changeset.change(limits: %{"max_size_bytes" => 500}) |> Repo.update!()
 
-      assert Limits.resolve(database, tenant).max_size_bytes == 500
+      assert {:ok, %{max_size_bytes: 500}} = Limits.resolve(database, tenant)
 
       database =
         database |> Ecto.Changeset.change(limits: %{"max_size_bytes" => 900}) |> Repo.update!()
 
-      assert Limits.resolve(database, tenant).max_size_bytes == 900
+      assert {:ok, %{max_size_bytes: 900}} = Limits.resolve(database, tenant)
     end
 
     test "looks the tenant up when not provided" do
@@ -38,7 +38,21 @@ defmodule Smolsqls.LimitsTest do
         |> Repo.update()
 
       database = database_fixture(tenant)
-      assert Limits.resolve(database).query_timeout_ms == 1_234
+      assert {:ok, %{query_timeout_ms: 1_234}} = Limits.resolve(database)
+    end
+
+    test "a tenant that cannot be resolved fails retryably instead of defaulting" do
+      database = %ControlPlane.Database{
+        id: Ecto.UUID.generate(),
+        tenant_id: Ecto.UUID.generate()
+      }
+
+      assert {:error, :metadb_unavailable} = Limits.resolve(database)
+    end
+
+    test "a database carrying no tenant resolves cluster defaults" do
+      assert {:ok, resolved} = Limits.resolve(%ControlPlane.Database{id: Ecto.UUID.generate()})
+      assert resolved.max_size_bytes == 1_073_741_824
     end
 
     test "ignores unknown keys" do
@@ -49,7 +63,7 @@ defmodule Smolsqls.LimitsTest do
         |> Ecto.Changeset.change(limits: %{"not_a_limit" => 1})
         |> Repo.update()
 
-      resolved = Limits.resolve(nil, tenant)
+      assert {:ok, resolved} = Limits.resolve(nil, tenant)
       refute Map.has_key?(resolved, :not_a_limit)
     end
   end
@@ -117,7 +131,7 @@ defmodule Smolsqls.LimitsTest do
           limits: %{"query_timeout_ms" => 50, "statement_timeout_ms" => 200}
         )
 
-      limits = Smolsqls.Limits.resolve(database)
+      assert {:ok, limits} = Smolsqls.Limits.resolve(database)
 
       assert {:error, :query_timeout} =
                DataPlane.query(database.id, @slow_query, [], limits.query_timeout_ms)

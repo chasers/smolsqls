@@ -94,7 +94,11 @@ full walk-through.
   PVC-backed volumes, Litestream replication, CRD-driven backup/restore.
 - **Credentials, quotas, and limits are rows, not config** — managed token
   lifecycle (hashed + encrypted at rest), row-based per-tenant/per-database
-  limits resolved from the read model.
+  limits resolved through the read-model cache.
+- **Queries survive a metadb outage** for any database used recently: each node
+  caches the request-path rows it is actually asked for
+  ([how](docs/read-model-cache.md)). Management API calls fail with Postgres;
+  queries for cached databases do not.
 
 ## Running locally
 

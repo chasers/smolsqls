@@ -18,6 +18,12 @@ defmodule SmolsqlsWeb.AccountLive.Index do
 
       {:error, :unauthorized} ->
         {:ok, redirect(socket, to: ~p"/")}
+
+      {:error, :metadb_unavailable} ->
+        {:ok,
+         socket
+         |> put_flash(:error, "The dashboard is temporarily unavailable — try again shortly")
+         |> redirect(to: ~p"/")}
     end
   end
 
