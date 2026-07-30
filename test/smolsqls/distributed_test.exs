@@ -7,6 +7,14 @@ defmodule Smolsqls.DistributedTest do
 
   Excluded by default; run with `mix test --include distributed`.
   Requires `epmd` to be running (`epmd -daemon`).
+
+  Tenants backing activation tests are committed for real
+  (`committed_tenant/0`), not sandboxed: the sandbox transaction is
+  invisible to the peer node's own Postgres connections, and activation
+  resolves limits on the owner node — a sandboxed tenant reads as
+  `not_found` there and the activation fails retryably. A committed row
+  models production, where a tenant with live databases always exists
+  outside any transaction.
   """
 
   use ExUnit.Case, async: false
@@ -263,7 +271,7 @@ defmodule Smolsqls.DistributedTest do
     Ecto.Adapters.SQL.Sandbox.checkout(Smolsqls.Repo)
     Ecto.Adapters.SQL.Sandbox.mode(Smolsqls.Repo, {:shared, self()})
 
-    tenant = Smolsqls.Fixtures.tenant_fixture()
+    tenant = committed_tenant()
     database = Smolsqls.Fixtures.database_fixture(tenant)
 
     {:ok, database} = Smolsqls.DataPlane.place_database_locally(database)
@@ -329,6 +337,43 @@ defmodule Smolsqls.DistributedTest do
 
   defp peer_name do
     :"smolsqls_peer_#{System.unique_integer([:positive])}"
+  end
+
+  defp committed_tenant do
+    tenant_id = Ecto.UUID.generate()
+    conn = start_raw_conn!()
+
+    Postgrex.query!(
+      conn,
+      """
+      INSERT INTO tenants (id, name, slug, inserted_at, updated_at)
+      VALUES ($1::uuid, 'Dist Org', $2, now(), now())
+      """,
+      [Ecto.UUID.dump!(tenant_id), "dist-#{System.unique_integer([:positive])}"]
+    )
+
+    GenServer.stop(conn)
+
+    on_exit(fn ->
+      cleanup = start_raw_conn!()
+
+      Postgrex.query!(cleanup, "DELETE FROM tenants WHERE id = $1::uuid", [
+        Ecto.UUID.dump!(tenant_id)
+      ])
+
+      GenServer.stop(cleanup)
+    end)
+
+    Smolsqls.Repo.get!(Smolsqls.ControlPlane.Tenant, tenant_id)
+  end
+
+  defp start_raw_conn! do
+    config =
+      Application.fetch_env!(:smolsqls, Smolsqls.Repo)
+      |> Keyword.take([:hostname, :username, :password, :database, :port])
+
+    {:ok, conn} = Postgrex.start_link(config)
+    conn
   end
 
   defp wait_until(fun, attempts \\ 100)
