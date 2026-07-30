@@ -5,6 +5,43 @@ one-screen version; this is the deep dive.
 
 Built for ~1M databases per cluster across ~10 data-plane nodes.
 
+## System overview
+
+```mermaid
+flowchart TB
+    Clients["Clients\nlibSQL / Hrana (WebSocket) · Hrana (HTTP) · plain HTTP"]
+    GLB["Global load balancer\ngeo-routes to the nearest region"]
+
+    Clients --> GLB
+    GLB --> RegionA
+    GLB --> RegionB
+
+    subgraph RegionA["Kubernetes cluster — gcp-us-central1"]
+        subgraph SSA["StatefulSet (pod ↔ ordinal ↔ PVC)"]
+            subgraph PodA["Pod smolsqls-0"]
+                NodeA["Elixir node"]
+                LSA["litestream\none process per pod, driven by\nElixir over its control socket"]
+            end
+            PodA2["Pod smolsqls-1 …"]
+        end
+        NodeA <-. "Erlang cluster" .-> PodA2
+    end
+
+    subgraph RegionB["Kubernetes cluster — aws-us-east-1"]
+        PodsB["Pods …"]
+    end
+
+    RegionA <== "Erlang distribution across clusters;\nqueries routed over partitioned\ngen_rpc connections" ==> RegionB
+
+    PG[("Postgres metadb")]
+    S3[("S3\nbackups · idle snapshots · litestream replicas")]
+
+    RegionA --- PG
+    RegionB --- PG
+    LSA --> S3
+    NodeA --> S3
+```
+
 ## Control plane
 
 Postgres-backed: tenants, databases, auth tokens, and placement decisions.
@@ -32,6 +69,38 @@ discovery (LISTEN/NOTIFY on the metadb), never query payloads. On boot each node
 walks its data volume and claims any database whose file is local but whose
 record points elsewhere — the volume, not the node name, is the source of truth
 for placement.
+
+### Query routing
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant E as Edge (any node)
+    participant R as Router
+    participant O as Owning node
+    participant S as Database.Server
+    participant Q as SQLite
+
+    C->>E: SQL + auth token
+    E->>E: authenticate + resolve limits (read model)
+    E->>E: rate limit, reject BEGIN/COMMIT/…
+    E->>R: DataPlane.query(db_id, sql, args)
+    R->>R: syn lookup — who owns db?
+    alt hot, local
+        R->>S: GenServer.call
+    else hot, remote
+        R->>O: gen_rpc → local_op
+        O->>S: GenServer.call
+    else cold (no server anywhere)
+        R->>O: activate on placed node
+        O->>O: restore file from S3 if missing/stale
+        O->>S: start server, GenServer.call
+    end
+    S->>Q: prepare(sql), bind(args), step
+    Q-->>S: columns · rows · changes
+    S-->>C: result
+```
 
 ## Storage portability
 
