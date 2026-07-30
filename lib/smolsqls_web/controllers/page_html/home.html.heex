@@ -1,4 +1,4 @@
-<Layouts.app flash={@flash}>
+<Layouts.app flash={@flash} logged_in?={@logged_in?}>
   <div class="mx-auto max-w-xl space-y-10 py-16">
     <div class="space-y-4 text-center">
       <h1 class="text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -30,12 +30,29 @@
       </div>
     </div>
 
+    <div :if={@logged_in?} class="card border border-base-300 bg-base-200">
+      <div class="card-body flex-row items-center justify-between gap-4">
+        <div>
+          <h2 class="text-sm font-medium">You're signed in</h2>
+          <p class="text-sm text-base-content/60">
+            Your tenant and databases live in the dashboard.
+          </p>
+        </div>
+        <a href={~p"/dashboard"} class="btn btn-primary">Dashboard</a>
+      </div>
+    </div>
+
     <div class="card border border-base-300 bg-base-200">
       <div class="card-body space-y-4">
         <div>
           <h2 class="text-sm font-medium">New here? Create a tenant</h2>
           <p class="text-sm text-base-content/60">
             One tenant per organization — you get an API key back.
+            <span :if={@logged_in?}>
+              Already have one? Head to
+              <a href={~p"/dashboard"} class="link link-hover text-accent">your dashboard</a>
+              instead of creating another.
+            </span>
           </p>
         </div>
         <form action={~p"/signup"} method="post" class="space-y-2">

@@ -106,7 +106,7 @@ defmodule SmolsqlsWeb.AccountLive.Index do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash}>
+    <Layouts.app flash={@flash} logged_in?={true}>
       <div class="mx-auto max-w-4xl space-y-8 py-8">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
