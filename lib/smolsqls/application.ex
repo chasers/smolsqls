@@ -8,6 +8,7 @@ defmodule Smolsqls.Application do
   @impl true
   def start(_type, _args) do
     Smolsqls.DataPlane.Registry.init()
+    Smolsqls.DataPlane.ChangeStream.init()
 
     children =
       [
