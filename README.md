@@ -40,6 +40,11 @@ curl -X POST http://localhost:4000/v1/databases/$DB_ID/query \
   -H "authorization: Bearer $DB_TOKEN" \
   -H 'content-type: application/json' \
   -d '{"sql": "SELECT 1"}'
+
+# subscribe to its row changes (Server-Sent Events; optional
+# max_events / timeout_ms query params bound the stream)
+curl -N http://localhost:4000/v1/databases/$DB_ID/changes \
+  -H "authorization: Bearer $DB_TOKEN"
 ```
 
 Or connect with a stock libSQL client — nothing custom to install:
@@ -70,6 +75,8 @@ await client.execute("SELECT 1");
   the nearest one, and you can move a database between regions online.
 - **Sandboxed tenant SQL** — a SQLite authorizer denies `ATTACH`/`DETACH`/
   `VACUUM` and extension loading, isolating tenants on the shared connection.
+- **Change streaming (prototype)** — subscribe to a database's row changes over
+  SSE (`GET .../changes`); insert/update events carry the changed record.
 - **Agent-friendly by design** — every response is `{"data": ...}`, every error
   a stable `{"error": {"code", "message"}}`; `GET /v1` documents the full
   contract. No dashboard step is ever required.
