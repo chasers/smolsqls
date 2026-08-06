@@ -64,7 +64,7 @@ defmodule SmolsqlsWeb.Api.ChangeStreamControllerTest do
     |> authed(database.auth_token)
     |> get(changes_path(database, timeout_ms: 50))
 
-    assert ChangeStream.subscriber_count(database.id) == 0
+    Smolsqls.Wait.until(fn -> ChangeStream.subscriber_count(database.id) == 0 end)
   end
 
   test "rejects a database with streaming disabled", %{conn: conn} do

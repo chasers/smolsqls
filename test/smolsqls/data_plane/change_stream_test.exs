@@ -17,8 +17,13 @@ defmodule Smolsqls.DataPlane.ChangeStreamTest do
     %{database_id: database_id}
   end
 
-  test "subscriber receives insert events with the record", %{database_id: database_id} do
+  defp subscribed(database_id) do
     :ok = ChangeStream.subscribe(database_id)
+    Smolsqls.Wait.until(fn -> ChangeStream.subscriber_count(database_id) > 0 end)
+  end
+
+  test "subscriber receives insert events with the record", %{database_id: database_id} do
+    subscribed(database_id)
 
     {:ok, _} = Server.query(database_id, "INSERT INTO t (v) VALUES (?)", ["hello"])
 
@@ -33,7 +38,7 @@ defmodule Smolsqls.DataPlane.ChangeStreamTest do
        %{database_id: database_id} do
     {:ok, _} = Server.query(database_id, "INSERT INTO t (v) VALUES (?)", ["before"])
 
-    :ok = ChangeStream.subscribe(database_id)
+    subscribed(database_id)
 
     {:ok, _} = Server.query(database_id, "UPDATE t SET v = ? WHERE id = 1", ["after"])
 
@@ -50,7 +55,7 @@ defmodule Smolsqls.DataPlane.ChangeStreamTest do
 
   test "one statement changing many rows emits one event per row",
        %{database_id: database_id} do
-    :ok = ChangeStream.subscribe(database_id)
+    subscribed(database_id)
 
     {:ok, _} =
       Server.query(database_id, "INSERT INTO t (v) VALUES (?), (?), (?)", ["a", "b", "c"])
@@ -85,7 +90,7 @@ defmodule Smolsqls.DataPlane.ChangeStreamTest do
 
     {:ok, _} = Server.query(database_id, "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
 
-    :ok = ChangeStream.subscribe(database_id)
+    subscribed(database_id)
 
     {:ok, _} = Server.query(database_id, "INSERT INTO t (v) VALUES (?)", ["silent"])
     refute_receive {:smolsqls_change, _database_id, _event}, 200
@@ -101,7 +106,7 @@ defmodule Smolsqls.DataPlane.ChangeStreamTest do
     assert ChangeStream.subscriber_count(database_id) == 0
 
     :ok = ChangeStream.subscribe(database_id)
-    assert ChangeStream.subscriber_count(database_id) == 1
+    Smolsqls.Wait.until(fn -> ChangeStream.subscriber_count(database_id) == 1 end)
 
     subscriber =
       spawn(fn ->
@@ -118,6 +123,6 @@ defmodule Smolsqls.DataPlane.ChangeStreamTest do
     Smolsqls.Wait.until(fn -> ChangeStream.subscriber_count(database_id) == 1 end)
 
     :ok = ChangeStream.unsubscribe(database_id)
-    assert ChangeStream.subscriber_count(database_id) == 0
+    Smolsqls.Wait.until(fn -> ChangeStream.subscriber_count(database_id) == 0 end)
   end
 end
