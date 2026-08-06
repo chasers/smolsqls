@@ -47,6 +47,7 @@ defmodule SmolsqlsWeb.Router do
     get "/", IndexController, :index
     post "/tenants", TenantController, :create
     post "/databases/:database_id/query", QueryController, :create
+    get "/databases/:database_id/changes", ChangeStreamController, :show
   end
 
   scope "/v2", SmolsqlsWeb.Hrana do

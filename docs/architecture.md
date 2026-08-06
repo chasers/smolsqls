@@ -224,6 +224,25 @@ No custom client needed:
 - **Plain HTTP**: `POST /v1/databases/:id/query` with
   `{"sql": "...", "args": [...]}` and the database auth token as a Bearer token.
 
+## Change streaming (prototype)
+
+`GET /v1/databases/:id/changes` (database auth token) streams the database's
+row changes as Server-Sent Events. Capture happens in the per-database server:
+SQLite's update hook on the sole connection reports every insert/update/delete
+as `{action, table, rowid}`, and the server publishes to a `:syn` process group
+per database (`Smolsqls.DataPlane.ChangeStream`). Publishing is gated on
+subscriber presence — an unwatched database pays one local ETS lookup per
+changed row. Insert/update events are enriched with the row (re-read by rowid,
+best-effort) before fanout; delete events carry only `table` and `rowid`.
+Optional `max_events` / `timeout_ms` query params bound a stream (default 5
+minutes, max 10); a `: keepalive` comment goes out every 15s.
+
+Prototype limitations, by design: the update hook fires inside the writing
+transaction, so events from a transaction that later rolls back are still
+emitted; the enrichment read races later writes (the record reflects the row at
+read time); and cross-node fanout rides Erlang distribution, which the query
+path otherwise avoids.
+
 ## Tenant SQL sandbox
 
 Tenant SQL is sandboxed on the shared per-database connection. Every tenant
