@@ -141,6 +141,16 @@ defmodule SmolsqlsWeb.Api.IndexController do
         },
         %{
           method: "GET",
+          path: "#{base}/v1/databases/:id/changes?max_events=<n>&timeout_ms=<ms>",
+          auth: "database auth_token",
+          returns:
+            "Server-Sent Events stream of the database's row changes: one " <>
+              "'event: change' frame per insert/update/delete with data " <>
+              "{action, table, rowid, record}; record is null for deletes. " <>
+              "Both query params are optional (default 5-minute stream, 10-minute max)"
+        },
+        %{
+          method: "GET",
           path: "#{base}/v1/databases/:id/backups?after=<id>&limit=<n>",
           auth: "tenant api_key",
           returns: "page of backups plus a next cursor (null on the last page)"
