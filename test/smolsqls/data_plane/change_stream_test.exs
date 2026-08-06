@@ -69,6 +69,33 @@ defmodule Smolsqls.DataPlane.ChangeStreamTest do
     refute_receive {:smolsqls_change, _database_id, _event}, 200
   end
 
+  test "a disabled server publishes nothing until re-enabled", %{tmp_dir: tmp_dir} do
+    database_id = "cs-toggle-test-#{System.unique_integer([:positive])}"
+    file_path = Path.join(tmp_dir, database_id <> ".db")
+
+    database = %Smolsqls.ControlPlane.Database{
+      id: database_id,
+      change_stream_enabled: false
+    }
+
+    start_supervised!(
+      {Server, database_id: database_id, file_path: file_path, database: database},
+      id: :toggle_server
+    )
+
+    {:ok, _} = Server.query(database_id, "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+
+    :ok = ChangeStream.subscribe(database_id)
+
+    {:ok, _} = Server.query(database_id, "INSERT INTO t (v) VALUES (?)", ["silent"])
+    refute_receive {:smolsqls_change, _database_id, _event}, 200
+
+    :ok = Server.set_change_stream(database_id, true)
+
+    {:ok, _} = Server.query(database_id, "INSERT INTO t (v) VALUES (?)", ["loud"])
+    assert_receive {:smolsqls_change, ^database_id, %{record: %{"v" => "loud"}}}, 1_000
+  end
+
   test "subscriber_count tracks joins, leaves, and subscriber death",
        %{database_id: database_id} do
     assert ChangeStream.subscriber_count(database_id) == 0

@@ -237,6 +237,12 @@ best-effort) before fanout; delete events carry only `table` and `rowid`.
 Optional `max_events` / `timeout_ms` query params bound a stream (default 5
 minutes, max 10); a `: keepalive` comment goes out every 15s.
 
+Streaming is on by default and toggleable per database:
+`PATCH /v1/databases/:id {"change_stream_enabled": false}` (a settings row like
+`litestream_enabled`). Disabling pushes to a hot server immediately —
+subscription attempts get `403 change_stream_disabled`, the dashboard view
+shows a disabled notice, and the server skips capture work entirely.
+
 The dashboard exposes the same feed: **Changes** on any database opens a
 LiveView (`/dashboard/databases/:id/changes`) whose server process subscribes
 to the `:syn` group directly — no SSE hop — and renders events live.

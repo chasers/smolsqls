@@ -18,6 +18,7 @@ defmodule SmolsqlsWeb.Api.DatabaseJSON do
       region: database.region,
       cloud: database.cloud,
       litestream_enabled: database.litestream_enabled,
+      change_stream_enabled: database.change_stream_enabled,
       created_at: database.inserted_at,
       source_database_id: database.source_database_id,
       branch_point_at: database.branch_point_at,

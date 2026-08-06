@@ -13,6 +13,7 @@ defmodule SmolsqlsWeb.Api.ChangeStreamController do
   def show(conn, %{"database_id" => database_id} = params) do
     with {:ok, token} <- bearer_token(conn),
          {:ok, database} <- ControlPlane.authenticate_database(database_id, token),
+         :ok <- check_stream_enabled(database),
          {:ok, limits} <- Smolsqls.Limits.resolve(database),
          :ok <- check_rate_limit(database, limits) do
       stream_changes(conn, database.id, max_events(params), duration_ms(params))
@@ -87,6 +88,9 @@ defmodule SmolsqlsWeb.Api.ChangeStreamController do
       _other -> @default_duration
     end
   end
+
+  defp check_stream_enabled(%{change_stream_enabled: true}), do: :ok
+  defp check_stream_enabled(_database), do: {:error, :change_stream_disabled}
 
   defp check_rate_limit(database, limits) do
     if Smolsqls.RateLimiter.allow?(database.id, limits.rate_limit_rps) do

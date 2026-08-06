@@ -26,6 +26,7 @@ defmodule Smolsqls.ReadModel.Row do
       cloud: Map.get(values, "cloud"),
       file_path: Map.get(values, "file_path"),
       litestream_enabled: boolean(Map.get(values, "litestream_enabled")),
+      change_stream_enabled: boolean(Map.get(values, "change_stream_enabled")),
       snapshot_generation: integer(Map.get(values, "snapshot_generation")),
       last_snapshot_at: datetime(Map.get(values, "last_snapshot_at")),
       limits: map(Map.get(values, "limits")),

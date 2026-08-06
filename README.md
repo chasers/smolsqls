@@ -76,7 +76,8 @@ await client.execute("SELECT 1");
 - **Sandboxed tenant SQL** — a SQLite authorizer denies `ATTACH`/`DETACH`/
   `VACUUM` and extension loading, isolating tenants on the shared connection.
 - **Change streaming (prototype)** — subscribe to a database's row changes over
-  SSE (`GET .../changes`); insert/update events carry the changed record.
+  SSE (`GET .../changes`); insert/update events carry the changed record. On by
+  default, per-database toggle via `PATCH` `{"change_stream_enabled": false}`.
 - **Agent-friendly by design** — every response is `{"data": ...}`, every error
   a stable `{"error": {"code", "message"}}`; `GET /v1` documents the full
   contract. No dashboard step is ever required.

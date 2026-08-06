@@ -67,6 +67,19 @@ defmodule SmolsqlsWeb.Api.ChangeStreamControllerTest do
     assert ChangeStream.subscriber_count(database.id) == 0
   end
 
+  test "rejects a database with streaming disabled", %{conn: conn} do
+    tenant = tenant_fixture()
+    database = placed_database_fixture(tenant, %{"change_stream_enabled" => false})
+
+    body =
+      conn
+      |> authed(database.auth_token)
+      |> get(changes_path(database, []))
+      |> json_response(403)
+
+    assert body["error"]["code"] == "change_stream_disabled"
+  end
+
   test "rejects a missing bearer token", %{conn: conn, database: database} do
     body = conn |> get(changes_path(database, [])) |> json_response(401)
     assert body["error"]["code"] == "unauthorized"

@@ -64,6 +64,17 @@ defmodule SmolsqlsWeb.DatabaseLive.ChangesTest do
     assert render_hook(view, "ping", %{})
   end
 
+  test "shows a disabled notice and does not subscribe when streaming is off", %{conn: conn} do
+    tenant = tenant_fixture()
+    database = placed_database_fixture(tenant, %{"change_stream_enabled" => false})
+
+    {:ok, _view, html} =
+      live(authed_conn(conn, tenant), ~p"/dashboard/databases/#{database.id}/changes")
+
+    assert html =~ "Change streaming is disabled"
+    assert ChangeStream.subscriber_count(database.id) == 0
+  end
+
   test "the database list links to the change stream", %{conn: conn} do
     tenant = tenant_fixture()
     database = placed_database_fixture(tenant)

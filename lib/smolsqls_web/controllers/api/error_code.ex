@@ -31,6 +31,12 @@ defmodule SmolsqlsWeb.Api.ErrorCode do
   def classify(:database_limit_reached),
     do: {:forbidden, "database_limit_reached", "tenant has reached its database limit"}
 
+  def classify(:change_stream_disabled),
+    do:
+      {:forbidden, "change_stream_disabled",
+       "change streaming is disabled for this database — enable it with " <>
+         "PATCH /v1/databases/:id {\"change_stream_enabled\": true}"}
+
   def classify(:no_capacity_in_region),
     do:
       {:service_unavailable, "no_capacity_in_region",
