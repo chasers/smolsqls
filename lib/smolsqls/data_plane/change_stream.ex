@@ -4,19 +4,25 @@ defmodule Smolsqls.DataPlane.ChangeStream do
   path to live subscribers.
 
   Delivery rides `Phoenix.PubSub` (the `Smolsqls.PubSub` server) on a
-  topic per database. A `:syn` process group mirrors the subscriber
-  set purely for presence counting — `Phoenix.PubSub` cannot answer
-  "does anyone care?", and `Smolsqls.DataPlane.Database.Server` uses
-  `subscriber_count/1` (a cheap local ETS lookup) to skip capture work
-  entirely on databases nobody is watching.
+  topic per database. Subscribers are tracked with `Phoenix.Presence`
+  (`Smolsqls.DataPlane.ChangeStream.Presence`) on a companion topic —
+  separate so presence-diff broadcasts never land in subscriber
+  mailboxes — whose ETS-mirrored count lets
+  `Smolsqls.DataPlane.Database.Server` skip capture work entirely on
+  databases nobody is watching: one lock-free ETS read per changed
+  row. `:syn` plays no part here; it tracks database server processes
+  only.
 
   Subscribers receive `{:smolsqls_change, database_id, event}`
-  messages. Cross-node delivery goes over Erlang distribution — events
-  are small, unlike query payloads, which deliberately stay off
-  distribution.
+  messages. Presence counts are eventually consistent, so events
+  written in the instant between subscribing and the count
+  propagating may be missed — a subscription is a live tap, not a
+  consistent snapshot point. Cross-node delivery goes over Erlang
+  distribution — events are small, unlike query payloads, which
+  deliberately stay off distribution.
   """
 
-  @scope :smolsqls_change_streams
+  alias Smolsqls.DataPlane.ChangeStream.Presence
 
   @type event :: %{
           action: :insert | :update | :delete,
@@ -25,32 +31,28 @@ defmodule Smolsqls.DataPlane.ChangeStream do
           record: %{String.t() => term()} | nil
         }
 
-  def scope, do: @scope
-
-  def init do
-    :syn.add_node_to_scopes([@scope])
-  end
-
   @doc """
   Subscribes the calling process to a database's change events. The
   subscription is cleaned up automatically when the process exits.
   """
   @spec subscribe(String.t()) :: :ok | {:error, term()}
   def subscribe(database_id) do
-    with :ok <- Phoenix.PubSub.subscribe(Smolsqls.PubSub, topic(database_id)) do
-      :syn.join(@scope, database_id, self())
+    with :ok <- Phoenix.PubSub.subscribe(Smolsqls.PubSub, topic(database_id)),
+         {:ok, _ref} <-
+           Presence.track(self(), presence_topic(database_id), inspect(self()), %{}) do
+      :ok
     end
   end
 
-  @spec unsubscribe(String.t()) :: :ok | {:error, term()}
+  @spec unsubscribe(String.t()) :: :ok
   def unsubscribe(database_id) do
-    :ok = Phoenix.PubSub.unsubscribe(Smolsqls.PubSub, topic(database_id))
-    :syn.leave(@scope, database_id, self())
+    :ok = Presence.untrack(self(), presence_topic(database_id), inspect(self()))
+    Phoenix.PubSub.unsubscribe(Smolsqls.PubSub, topic(database_id))
   end
 
   @spec subscriber_count(String.t()) :: non_neg_integer()
   def subscriber_count(database_id) do
-    :syn.member_count(@scope, database_id)
+    Presence.count(presence_topic(database_id))
   end
 
   @spec publish(String.t(), event()) :: :ok
@@ -64,4 +66,6 @@ defmodule Smolsqls.DataPlane.ChangeStream do
   end
 
   defp topic(database_id), do: "change_stream:" <> database_id
+
+  defp presence_topic(database_id), do: "change_stream_presence:" <> database_id
 end

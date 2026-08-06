@@ -8,7 +8,6 @@ defmodule Smolsqls.Application do
   @impl true
   def start(_type, _args) do
     Smolsqls.DataPlane.Registry.init()
-    Smolsqls.DataPlane.ChangeStream.init()
 
     children =
       [
@@ -16,6 +15,7 @@ defmodule Smolsqls.Application do
         Smolsqls.Repo,
         {Cluster.Supervisor, [cluster_topologies(), [name: Smolsqls.ClusterSupervisor]]},
         {Phoenix.PubSub, name: Smolsqls.PubSub},
+        Smolsqls.DataPlane.ChangeStream.Presence,
         Smolsqls.RateLimiter,
         Smolsqls.SignupLimiter,
         Smolsqls.DataPlane.Supervisor,

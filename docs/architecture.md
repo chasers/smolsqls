@@ -230,9 +230,10 @@ No custom client needed:
 row changes as Server-Sent Events. Capture happens in the per-database server:
 SQLite's update hook on the sole connection reports every insert/update/delete
 as `{action, table, rowid}`, and the server broadcasts on a `Phoenix.PubSub`
-topic per database (`Smolsqls.DataPlane.ChangeStream`); a `:syn` process group
-mirrors the subscriber set for presence counting. Publishing is gated on that
-presence — an unwatched database pays one local ETS lookup per changed row. Insert/update events are enriched with the row (re-read by rowid,
+topic per database (`Smolsqls.DataPlane.ChangeStream`); subscribers are tracked
+with `Phoenix.Presence`, whose per-topic count is mirrored into ETS. Publishing
+is gated on that count — an unwatched database pays one lock-free ETS read per
+changed row, and `:syn` stays dedicated to the database-server registry. Insert/update events are enriched with the row (re-read by rowid,
 best-effort) before fanout; delete events carry only `table` and `rowid`.
 Optional `max_events` / `timeout_ms` query params bound a stream (default 5
 minutes, max 10); a `: keepalive` comment goes out every 15s.
