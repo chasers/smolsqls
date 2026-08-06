@@ -25,6 +25,11 @@ defmodule Smolsqls.DataPlane.Database.Server do
   snapshot ships). A transaction left open by an ownerless caller is
   rolled back immediately, so the shared connection can never leak
   state.
+
+  Row changes are captured through SQLite's update hook and fanned out
+  via `Smolsqls.DataPlane.ChangeStream` — but only when the database
+  has live subscribers, so the write path pays one ETS lookup per
+  changed row and nothing more.
   """
 
   use GenServer, restart: :transient
@@ -33,6 +38,7 @@ defmodule Smolsqls.DataPlane.Database.Server do
 
   alias Exqlite.Sqlite3
   alias Smolsqls.ControlPlane.Database
+  alias Smolsqls.DataPlane.ChangeStream
   alias Smolsqls.DataPlane.IdleSnapshots
   alias Smolsqls.DataPlane.Registry
 
@@ -185,6 +191,7 @@ defmodule Smolsqls.DataPlane.Database.Server do
         :ok = Sqlite3.execute(conn, "PRAGMA foreign_keys=ON")
         :ok = Sqlite3.set_busy_timeout(conn, :timer.seconds(5))
         :ok = Sqlite3.enable_load_extension(conn, false)
+        :ok = Sqlite3.set_update_hook(conn, self())
         :ok = apply_max_size(conn, limits.max_size_bytes)
 
         if limits.max_hot_ms do
@@ -301,6 +308,12 @@ defmodule Smolsqls.DataPlane.Database.Server do
     {:noreply, rollback_lease(state), state.idle_ttl}
   end
 
+  def handle_info({action, _db_name, table, rowid}, state)
+      when action in [:insert, :update, :delete] do
+    publish_change(state, action, table, rowid)
+    {:noreply, state, state.idle_ttl}
+  end
+
   def handle_info(_message, state) do
     {:noreply, state, state.idle_ttl}
   end
@@ -316,6 +329,30 @@ defmodule Smolsqls.DataPlane.Database.Server do
     state = ship_if_needed(state)
     if replicated?(state), do: Smolsqls.DataPlane.Litestream.stop(state.file_path)
     %{state | clean_shutdown: not state.dirty}
+  end
+
+  defp publish_change(state, action, table, rowid) do
+    if ChangeStream.subscriber_count(state.database_id) > 0 do
+      event = %{
+        action: action,
+        table: table,
+        rowid: rowid,
+        record: fetch_record(state, action, table, rowid)
+      }
+
+      ChangeStream.publish(state.database_id, event)
+    end
+  end
+
+  defp fetch_record(_state, :delete, _table, _rowid), do: nil
+
+  defp fetch_record(state, _action, table, rowid) do
+    quoted_table = "\"" <> String.replace(table, "\"", "\"\"") <> "\""
+
+    case run_query(state.conn, "SELECT * FROM #{quoted_table} WHERE rowid = ?", [rowid]) do
+      {:ok, %{columns: columns, rows: [row]}} -> columns |> Enum.zip(row) |> Map.new()
+      _other -> nil
+    end
   end
 
   defp lease_blocks?(%{txn_owner: nil}, _owner), do: false
