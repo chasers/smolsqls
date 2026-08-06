@@ -1,18 +1,19 @@
 defmodule Smolsqls.DataPlane.ChangeStream do
   @moduledoc """
   Cluster-wide fanout of row-change events from a database's write
-  path to live subscribers, backed by a `:syn` process group per
-  database.
+  path to live subscribers.
 
-  `Smolsqls.DataPlane.Database.Server` captures changes through
-  SQLite's update hook and publishes here only when the database has
-  at least one subscriber (`subscriber_count/1` is a cheap local ETS
-  lookup), so idle databases pay nothing.
+  Delivery rides `Phoenix.PubSub` (the `Smolsqls.PubSub` server) on a
+  topic per database. A `:syn` process group mirrors the subscriber
+  set purely for presence counting — `Phoenix.PubSub` cannot answer
+  "does anyone care?", and `Smolsqls.DataPlane.Database.Server` uses
+  `subscriber_count/1` (a cheap local ETS lookup) to skip capture work
+  entirely on databases nobody is watching.
 
   Subscribers receive `{:smolsqls_change, database_id, event}`
-  messages. Delivery to remote subscribers rides Erlang distribution
-  (`:syn.publish/3`) — events are small, unlike query payloads, which
-  deliberately stay off distribution.
+  messages. Cross-node delivery goes over Erlang distribution — events
+  are small, unlike query payloads, which deliberately stay off
+  distribution.
   """
 
   @scope :smolsqls_change_streams
@@ -36,11 +37,14 @@ defmodule Smolsqls.DataPlane.ChangeStream do
   """
   @spec subscribe(String.t()) :: :ok | {:error, term()}
   def subscribe(database_id) do
-    :syn.join(@scope, database_id, self())
+    with :ok <- Phoenix.PubSub.subscribe(Smolsqls.PubSub, topic(database_id)) do
+      :syn.join(@scope, database_id, self())
+    end
   end
 
   @spec unsubscribe(String.t()) :: :ok | {:error, term()}
   def unsubscribe(database_id) do
+    :ok = Phoenix.PubSub.unsubscribe(Smolsqls.PubSub, topic(database_id))
     :syn.leave(@scope, database_id, self())
   end
 
@@ -51,7 +55,13 @@ defmodule Smolsqls.DataPlane.ChangeStream do
 
   @spec publish(String.t(), event()) :: :ok
   def publish(database_id, event) do
-    {:ok, _count} = :syn.publish(@scope, database_id, {:smolsqls_change, database_id, event})
-    :ok
+    :ok =
+      Phoenix.PubSub.broadcast(
+        Smolsqls.PubSub,
+        topic(database_id),
+        {:smolsqls_change, database_id, event}
+      )
   end
+
+  defp topic(database_id), do: "change_stream:" <> database_id
 end

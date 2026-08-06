@@ -229,10 +229,10 @@ No custom client needed:
 `GET /v1/databases/:id/changes` (database auth token) streams the database's
 row changes as Server-Sent Events. Capture happens in the per-database server:
 SQLite's update hook on the sole connection reports every insert/update/delete
-as `{action, table, rowid}`, and the server publishes to a `:syn` process group
-per database (`Smolsqls.DataPlane.ChangeStream`). Publishing is gated on
-subscriber presence — an unwatched database pays one local ETS lookup per
-changed row. Insert/update events are enriched with the row (re-read by rowid,
+as `{action, table, rowid}`, and the server broadcasts on a `Phoenix.PubSub`
+topic per database (`Smolsqls.DataPlane.ChangeStream`); a `:syn` process group
+mirrors the subscriber set for presence counting. Publishing is gated on that
+presence — an unwatched database pays one local ETS lookup per changed row. Insert/update events are enriched with the row (re-read by rowid,
 best-effort) before fanout; delete events carry only `table` and `rowid`.
 Optional `max_events` / `timeout_ms` query params bound a stream (default 5
 minutes, max 10); a `: keepalive` comment goes out every 15s.
@@ -245,7 +245,7 @@ shows a disabled notice, and the server skips capture work entirely.
 
 The dashboard exposes the same feed: **Changes** on any database opens a
 LiveView (`/dashboard/databases/:id/changes`) whose server process subscribes
-to the `:syn` group directly — no SSE hop — and renders events live.
+to the `ChangeStream` topic directly — no SSE hop — and renders events live.
 
 Prototype limitations, by design: the update hook fires inside the writing
 transaction, so events from a transaction that later rolls back are still
