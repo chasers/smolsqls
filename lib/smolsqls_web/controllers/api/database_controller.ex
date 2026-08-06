@@ -30,11 +30,12 @@ defmodule SmolsqlsWeb.Api.DatabaseController do
   end
 
   def update(conn, %{"id" => id} = params) do
-    settings = Map.take(params, ["litestream_enabled"])
+    settings = Map.take(params, ["litestream_enabled", "change_stream_enabled"])
 
     with {:ok, database} <- fetch_database(conn, id),
          {:ok, database} <- ControlPlane.update_database_settings(database, settings),
          :ok <- Smolsqls.DataPlane.set_replication(database),
+         :ok <- Smolsqls.DataPlane.set_change_stream(database),
          {:ok, database} <- maybe_relocate(database, params),
          {:ok, limits} <- resolve_limits(conn, database) do
       render(conn, :show, database: database, limits: limits, include_token: true)

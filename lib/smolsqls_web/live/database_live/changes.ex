@@ -10,7 +10,9 @@ defmodule SmolsqlsWeb.DatabaseLive.Changes do
   def mount(%{"database_id" => database_id}, session, socket) do
     with {:ok, tenant} <- authenticate(session),
          %{} = database <- ControlPlane.get_database(tenant, database_id) do
-      if connected?(socket), do: ChangeStream.subscribe(database.id)
+      if connected?(socket) and database.change_stream_enabled do
+        ChangeStream.subscribe(database.id)
+      end
 
       {:ok,
        socket
@@ -82,14 +84,37 @@ defmodule SmolsqlsWeb.DatabaseLive.Changes do
             </p>
           </div>
           <div class="flex items-center gap-2">
-            <span class="badge badge-sm badge-soft badge-success">live</span>
+            <span
+              :if={@database.change_stream_enabled}
+              class="badge badge-sm badge-soft badge-success"
+            >
+              live
+            </span>
+            <span
+              :if={not @database.change_stream_enabled}
+              class="badge badge-sm badge-soft badge-warning"
+            >
+              disabled
+            </span>
             <.link navigate={~p"/dashboard"} class="btn btn-ghost btn-sm">Back to databases</.link>
           </div>
         </div>
 
         <div class="card border border-base-300 bg-base-200">
           <div class="card-body">
-            <p :if={@event_count == 0} class="text-center text-base-content/50 py-8">
+            <p
+              :if={not @database.change_stream_enabled}
+              class="text-center text-base-content/50 py-8"
+            >
+              Change streaming is disabled for this database — enable it with
+              <code class="font-mono text-xs">
+                {~s(PATCH /v1/databases/:id {"change_stream_enabled": true})}
+              </code>
+            </p>
+            <p
+              :if={@database.change_stream_enabled and @event_count == 0}
+              class="text-center text-base-content/50 py-8"
+            >
               Waiting for changes — write to this database and events appear here.
             </p>
             <table :if={@event_count > 0} class="table table-sm">

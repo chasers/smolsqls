@@ -111,6 +111,15 @@ defmodule Smolsqls.DataPlane.Database.Server do
   end
 
   @doc """
+  Applies a live change-stream toggle (push-to-hot); activation reads
+  the flag from the database row.
+  """
+  @spec set_change_stream(pid() | String.t(), boolean()) :: :ok | {:error, term()}
+  def set_change_stream(server, enabled) when is_boolean(enabled) do
+    call(server, {:set_change_stream, enabled}, @default_query_timeout)
+  end
+
+  @doc """
   Applies freshly resolved limits to a running server (push-to-hot):
   the size cap re-applies immediately, the idle TTL takes effect from
   the next statement. `max_hot_ms` stays as armed at activation.
@@ -205,6 +214,7 @@ defmodule Smolsqls.DataPlane.Database.Server do
           idle_ttl: idle_ttl,
           limits: limits,
           database: Keyword.get(opts, :database),
+          change_stream_enabled: change_stream_enabled?(Keyword.get(opts, :database)),
           dirty: true,
           clean_shutdown: false,
           txn_owner: nil,
@@ -278,6 +288,10 @@ defmodule Smolsqls.DataPlane.Database.Server do
     {:reply, state.database_id, state, state.idle_ttl}
   end
 
+  def handle_call({:set_change_stream, enabled}, _from, state) do
+    {:reply, :ok, %{state | change_stream_enabled: enabled}, state.idle_ttl}
+  end
+
   def handle_call({:set_limits, limits}, _from, state) do
     :ok = apply_max_size(state.conn, limits.max_size_bytes)
     idle_ttl = limits.idle_ttl_ms || default_idle_ttl()
@@ -330,6 +344,11 @@ defmodule Smolsqls.DataPlane.Database.Server do
     if replicated?(state), do: Smolsqls.DataPlane.Litestream.stop(state.file_path)
     %{state | clean_shutdown: not state.dirty}
   end
+
+  defp change_stream_enabled?(%Database{change_stream_enabled: enabled}), do: enabled
+  defp change_stream_enabled?(_database), do: true
+
+  defp publish_change(%{change_stream_enabled: false}, _action, _table, _rowid), do: :ok
 
   defp publish_change(state, action, table, rowid) do
     if ChangeStream.subscriber_count(state.database_id) > 0 do

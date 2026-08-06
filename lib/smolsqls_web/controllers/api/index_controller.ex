@@ -75,10 +75,15 @@ defmodule SmolsqlsWeb.Api.IndexController do
       ),
       endpoint("GET", "#{base}/v1/databases/:id", "tenant api_key"),
       endpoint("PATCH", "#{base}/v1/databases/:id", "tenant api_key",
-        body: %{litestream_enabled: true, region: "gcp-europe-west1"},
+        body: %{
+          litestream_enabled: true,
+          change_stream_enabled: false,
+          region: "gcp-europe-west1"
+        },
         returns:
-          "toggle continuous (litestream) replication and/or move the database to a " <>
-            "new region (relocates its file; queries are briefly retryable during the move)"
+          "toggle continuous (litestream) replication, toggle change streaming (on by " <>
+            "default), and/or move the database to a new region (relocates its file; " <>
+            "queries are briefly retryable during the move)"
       ),
       endpoint("DELETE", "#{base}/v1/databases/:id", "tenant api_key"),
       endpoint("GET", "#{base}/v1/databases/:id/tokens", "tenant api_key",
@@ -108,7 +113,8 @@ defmodule SmolsqlsWeb.Api.IndexController do
           "Server-Sent Events stream of the database's row changes: one " <>
             "'event: change' frame per insert/update/delete with data " <>
             "{action, table, rowid, record}; record is null for deletes. " <>
-            "Both query params are optional (default 5-minute stream, 10-minute max)"
+            "Both query params are optional (default 5-minute stream, 10-minute max). " <>
+            "403 change_stream_disabled when streaming is turned off for the database"
       ),
       endpoint("GET", "#{base}/v1/databases/:id/backups?after=<id>&limit=<n>", "tenant api_key",
         returns: "page of backups plus a next cursor (null on the last page)"

@@ -195,6 +195,29 @@ defmodule SmolsqlsWeb.Api.ApiFlowTest do
       assert body["data"]["litestream_enabled"] == false
     end
 
+    test "toggle change streaming via PATCH, on by default", %{conn: conn} do
+      tenant = tenant_fixture()
+      database = placed_database_fixture(tenant)
+
+      assert database.change_stream_enabled == true
+
+      body =
+        conn
+        |> authed(tenant.api_key)
+        |> patch(~p"/v1/databases/#{database.id}", %{"change_stream_enabled" => false})
+        |> json_response(200)
+
+      assert body["data"]["change_stream_enabled"] == false
+
+      body =
+        conn
+        |> authed(tenant.api_key)
+        |> patch(~p"/v1/databases/#{database.id}", %{"change_stream_enabled" => true})
+        |> json_response(200)
+
+      assert body["data"]["change_stream_enabled"] == true
+    end
+
     test "cannot touch another tenant's database", %{conn: conn} do
       tenant = tenant_fixture()
       other_tenant = tenant_fixture()

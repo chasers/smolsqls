@@ -19,6 +19,7 @@ defmodule Smolsqls.ControlPlane.Database do
     field :file_path, :string
     field :auth_token, :string, virtual: true, redact: true
     field :litestream_enabled, :boolean, default: false
+    field :change_stream_enabled, :boolean, default: true
     field :snapshot_generation, :integer, default: 0
     field :last_snapshot_at, :utc_datetime_usec
     field :limits, :map, default: %{}
@@ -35,7 +36,7 @@ defmodule Smolsqls.ControlPlane.Database do
 
   def create_changeset(database, attrs) do
     database
-    |> cast(attrs, [:name, :tenant_id, :litestream_enabled, :region])
+    |> cast(attrs, [:name, :tenant_id, :litestream_enabled, :change_stream_enabled, :region])
     |> put_default_region()
     |> validate_required([:name, :tenant_id])
     |> validate_format(:name, ~r/^[a-z0-9][a-z0-9_-]*$/)
@@ -56,6 +57,7 @@ defmodule Smolsqls.ControlPlane.Database do
       :name,
       :tenant_id,
       :litestream_enabled,
+      :change_stream_enabled,
       :region,
       :source_database_id,
       :branch_point_at,
@@ -77,7 +79,7 @@ defmodule Smolsqls.ControlPlane.Database do
   end
 
   def settings_changeset(database, attrs) do
-    cast(database, attrs, [:litestream_enabled])
+    cast(database, attrs, [:litestream_enabled, :change_stream_enabled])
   end
 
   @doc """

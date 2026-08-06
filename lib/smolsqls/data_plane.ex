@@ -384,6 +384,29 @@ defmodule Smolsqls.DataPlane do
   end
 
   @doc """
+  Applies a live change-stream toggle to a running server. No-op when
+  the server is cold — activation applies the flag.
+  """
+  @spec set_change_stream(Database.t()) :: :ok
+  def set_change_stream(%Database{} = database) do
+    on_owner_node(database, :set_change_stream_locally, [database])
+  end
+
+  @spec set_change_stream_locally(Database.t()) :: :ok
+  def set_change_stream_locally(%Database{} = database) do
+    case Registry.whereis(database.id) do
+      pid when is_pid(pid) ->
+        Smolsqls.DataPlane.Database.Server.set_change_stream(
+          pid,
+          database.change_stream_enabled
+        )
+
+      :undefined ->
+        :ok
+    end
+  end
+
+  @doc """
   Takes a consistent snapshot on the owning node (`VACUUM INTO` through
   the single writer) and uploads it to the object store. Returns the
   object key and size for the control plane to record.
