@@ -54,6 +54,16 @@ defmodule SmolsqlsWeb.DatabaseLive.ChangesTest do
     Smolsqls.Wait.until(fn -> render(view) =~ "delete" end)
   end
 
+  test "answers the layout's ping hook", %{conn: conn} do
+    tenant = tenant_fixture()
+    database = placed_database_fixture(tenant)
+
+    {:ok, view, _html} =
+      live(authed_conn(conn, tenant), ~p"/dashboard/databases/#{database.id}/changes")
+
+    assert render_hook(view, "ping", %{})
+  end
+
   test "the database list links to the change stream", %{conn: conn} do
     tenant = tenant_fixture()
     database = placed_database_fixture(tenant)

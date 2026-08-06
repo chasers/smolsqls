@@ -38,6 +38,9 @@ defmodule SmolsqlsWeb.DatabaseLive.Changes do
   end
 
   @impl true
+  def handle_event("ping", _params, socket), do: {:reply, %{}, socket}
+
+  @impl true
   def handle_info({:smolsqls_change, _database_id, event}, socket) do
     entry = %{
       id: System.unique_integer([:positive, :monotonic]),
