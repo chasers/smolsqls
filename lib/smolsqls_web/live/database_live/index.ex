@@ -497,6 +497,12 @@ defmodule SmolsqlsWeb.DatabaseLive.Index do
                   <button class="btn btn-ghost btn-sm" phx-click="backup" phx-value-id={database.id}>
                     Backup
                   </button>
+                  <.link
+                    navigate={~p"/dashboard/databases/#{database.id}/changes"}
+                    class="btn btn-ghost btn-sm"
+                  >
+                    Changes
+                  </.link>
                   <button
                     class="btn btn-ghost btn-sm"
                     phx-click="toggle_branch"

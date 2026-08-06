@@ -237,6 +237,10 @@ best-effort) before fanout; delete events carry only `table` and `rowid`.
 Optional `max_events` / `timeout_ms` query params bound a stream (default 5
 minutes, max 10); a `: keepalive` comment goes out every 15s.
 
+The dashboard exposes the same feed: **Changes** on any database opens a
+LiveView (`/dashboard/databases/:id/changes`) whose server process subscribes
+to the `:syn` group directly — no SSE hop — and renders events live.
+
 Prototype limitations, by design: the update hook fires inside the writing
 transaction, so events from a transaction that later rolls back are still
 emitted; the enrichment read races later writes (the record reflects the row at

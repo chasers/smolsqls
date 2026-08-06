@@ -14,6 +14,7 @@ defmodule SmolsqlsWeb.HomeLiveTest do
     assert response =~ "Backups"
     assert response =~ "daily"
     assert response =~ "Database branching"
+    assert response =~ "Change streaming"
     assert response =~ "Point-in-time recovery"
     assert response =~ "30 days (litestream)"
   end

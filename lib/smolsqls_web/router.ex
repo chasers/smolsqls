@@ -34,6 +34,7 @@ defmodule SmolsqlsWeb.Router do
     post "/logout", SessionController, :delete
 
     live "/dashboard", DatabaseLive.Index, :index
+    live "/dashboard/databases/:database_id/changes", DatabaseLive.Changes, :show
     live "/account", AccountLive.Index, :index
 
     get "/dashboard/databases/:database_id/backups/:backup_id/download",

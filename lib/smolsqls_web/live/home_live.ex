@@ -26,6 +26,7 @@ defmodule SmolsqlsWeb.HomeLive do
       {"Size per database", format_bytes(defaults.max_size_bytes)},
       {"Backups", "daily"},
       {"Database branching", "included"},
+      {"Change streaming", "SSE + dashboard"},
       {"Point-in-time recovery", "30 days (litestream)"},
       {"Query timeout", format_ms(defaults.query_timeout_ms)},
       {"Statement timeout", format_ms(defaults.statement_timeout_ms)},

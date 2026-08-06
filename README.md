@@ -119,8 +119,9 @@ iex --sname smolsqls -S mix phx.server
 
 The LiveView UI is at [`localhost:4000`](http://localhost:4000) — sign up or
 paste a tenant API key, then create/delete databases, reveal connection strings
-alongside ready-to-run curl and `@libsql/client` quickstart snippets, and trigger
-backups from the dashboard. The **API keys** page (`/account`) manages
+alongside ready-to-run curl and `@libsql/client` quickstart snippets, trigger
+backups, and watch a database's live change stream (**Changes** on any
+database) from the dashboard. The **API keys** page (`/account`) manages
 account-level tenant keys: create any number (optionally named), reveal, copy,
 enable/disable, and delete — new signups land here to copy their first key.
 
